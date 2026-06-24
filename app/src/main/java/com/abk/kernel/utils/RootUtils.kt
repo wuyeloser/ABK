@@ -5,6 +5,7 @@ import com.abk.kernel.R
 import android.content.Context
 import android.content.pm.ApplicationInfo
 import android.content.pm.PackageManager
+import android.content.pm.PackageManager.NameNotFoundException
 import android.os.Build
 import android.os.Environment
 import android.util.Base64
@@ -14,19 +15,11 @@ import com.abk.kernel.data.model.RootGrantProfile
 import com.topjohnwu.superuser.CallbackList
 import com.topjohnwu.superuser.Shell
 import org.json.JSONObject
-import java.io.BufferedInputStream
 import java.io.File
-import java.io.FileInputStream
-import java.io.FileOutputStream
-import java.io.InputStream
-import java.io.OutputStream
 import java.util.Collections
 import java.util.Properties
 import java.security.MessageDigest
 import java.util.concurrent.TimeUnit
-import java.util.zip.ZipEntry
-import java.util.zip.ZipInputStream
-import java.util.zip.ZipOutputStream
 import kotlin.concurrent.thread
 
 object RootUtils {
@@ -48,8 +41,10 @@ object RootUtils {
     private const val ABK_META_MOUNT_WEB_ROOT = "/data/adb/modules/meta-abk-mount/webroot"
     private const val ABK_META_MOUNT_SYSFS_ENABLED = "/sys/kernel/abk_meta_mount/enabled"
     private const val ABK_META_MOUNT_SYSFS_PREPARE = "/sys/kernel/abk_meta_mount/prepare"
+    private const val ABK_EXTENSION_STATE_DIR = "/data/adb/abk/extensions"
     private val BOOT_PATCH_PARTITIONS = listOf("init_boot", "boot", "vendor_boot")
     private val KSU_FEATURE_NAME_REGEX = Regex("^[a-z0-9_]+$")
+    private val SAFE_EXTENSION_ID = Regex("^[A-Za-z0-9._-]+$")
     private var appContext: Context? = null
     private val bundledKsudLock = Any()
     @Volatile
@@ -224,6 +219,7 @@ object RootUtils {
         val stagedApk = File(stageDir, "manager-${System.currentTimeMillis()}.apk")
         return try {
             source.copyTo(stagedApk, overwrite = true)
+            val archive = apkArchiveMetadata(context.packageManager, stagedApk.absolutePath)
             val safeApk = shellQuote(stagedApk.absolutePath)
             val script = """
                 echo "[ABK] 开始安装管理器 APK"
@@ -256,7 +252,23 @@ object RootUtils {
                 fi
                 exit "${'$'}rc"
             """.trimIndent()
-            execRootScript(script, timeoutSeconds = 240, onOutput = onOutput)
+            val result = execRootScript(script, timeoutSeconds = 240, onOutput = onOutput)
+            if (result.success || archive == null) {
+                result
+            } else {
+                val installedVersion = installedPackageVersionCode(
+                    context.packageManager,
+                    archive.packageName
+                )
+                if (shouldRecoverSuccessfulApkInstall(result.output, archive.versionCode, installedVersion)) {
+                    ShellResult(
+                        success = true,
+                        output = result.output + "[ABK] 安装后校验通过：${archive.packageName} 已实际安装，忽略 shell 收尾失败"
+                    )
+                } else {
+                    result
+                }
+            }
         } catch (error: Exception) {
             val line = error.message ?: error::class.java.simpleName
             onOutput?.invoke(line)
@@ -284,20 +296,18 @@ object RootUtils {
         }
         val scriptFile = File(workDir, "flash_ak3.sh")
         return try {
-            val preparedZip = prepareAnyKernel3Zip(sourceZip, targetSlot, workDir, onOutput)
-                ?: return ShellResult(
-                    false,
-                    listOf(
-                        if (targetSlot == Ak3SlotTarget.INACTIVE) {
-                            "[ABK] 当前 AnyKernel3 不支持切换到另一槽位"
-                        } else {
-                            "[ABK] 准备 AnyKernel3 失败"
-                        }
-                    )
-                )
             onOutput?.invoke("[ABK] 目标槽位: ${if (targetSlot == Ak3SlotTarget.INACTIVE) "另一槽位" else "当前槽位"}")
             scriptFile.writeText(AK3_FLASH_SCRIPT)
-            val script = "F=${shellQuote(workDir.absolutePath)} Z=${shellQuote(preparedZip.absolutePath)} /system/bin/sh ${shellQuote(scriptFile.absolutePath)}"
+            val script = buildString {
+                append("F=")
+                append(shellQuote(workDir.absolutePath))
+                append(" Z=")
+                append(shellQuote(sourceZip.absolutePath))
+                append(" AK3_TARGET_SLOT_MODE=")
+                append(shellQuote(targetSlot.slotSelectValue))
+                append(" /system/bin/sh ")
+                append(shellQuote(scriptFile.absolutePath))
+            }
             execRootScript(script, timeoutSeconds = 300L, onOutput = onOutput)
         } finally {
             workDir.deleteRecursively()
@@ -554,6 +564,103 @@ object RootUtils {
     }
 
     fun reboot(): ShellResult = execRootScript("svc power reboot || reboot", timeoutSeconds = 15L)
+
+    fun launchActivityAsRoot(componentName: String, extras: Map<String, String> = emptyMap()): ShellResult {
+        if (componentName.isBlank()) {
+            return ShellResult(false, listOf(tr(R.string.extension_launch_failed)))
+        }
+        val args = buildString {
+            append("am start -n ")
+            append(shellQuote(componentName))
+            extras.forEach { (key, value) ->
+                append(" --es ")
+                append(shellQuote(key))
+                append(" ")
+                append(shellQuote(value))
+            }
+        }
+        return execRootScript(args, timeoutSeconds = 20L)
+    }
+
+    fun launchServiceAsRoot(
+        componentName: String,
+        extras: Map<String, String> = emptyMap(),
+        foreground: Boolean = true
+    ): ShellResult {
+        if (componentName.isBlank()) {
+            return ShellResult(false, listOf(tr(R.string.extension_launch_failed)))
+        }
+        val action = if (foreground) "start-foreground-service" else "startservice"
+        val args = buildString {
+            append("am ")
+            append(action)
+            append(" -n ")
+            append(shellQuote(componentName))
+            extras.forEach { (key, value) ->
+                append(" --es ")
+                append(shellQuote(key))
+                append(" ")
+                append(shellQuote(value))
+            }
+        }
+        val primary = execRootScript(args, timeoutSeconds = 20L)
+        if (primary.success || !foreground) {
+            return primary
+        }
+        val fallbackArgs = buildString {
+            append("am startservice -n ")
+            append(shellQuote(componentName))
+            extras.forEach { (key, value) ->
+                append(" --es ")
+                append(shellQuote(key))
+                append(" ")
+                append(shellQuote(value))
+            }
+        }
+        val fallback = execRootScript(fallbackArgs, timeoutSeconds = 20L)
+        return if (fallback.success) {
+            fallback
+        } else {
+            ShellResult(
+                success = false,
+                output = primary.output + fallback.output
+            )
+        }
+    }
+
+    fun readForegroundPackage(): String? {
+        val script = """
+            dumpsys activity activities 2>/dev/null | sed -n 's/.*mResumedActivity: .* \([^[:space:]/]*\)\/.*/\1/p' | head -n 1
+            dumpsys window windows 2>/dev/null | sed -n 's/.*mCurrentFocus=.* \([^[:space:]/]*\)\/.*/\1/p' | head -n 1
+            dumpsys activity activities 2>/dev/null | sed -n 's/.*mFocusedApp=.* \([^[:space:]/]*\)\/.*/\1/p' | head -n 1
+        """.trimIndent()
+        val result = execRootScript(script, timeoutSeconds = 10L)
+        if (!result.success) return null
+        return result.output
+            .map { it.trim() }
+            .firstOrNull { it.isNotBlank() && it != "null" }
+    }
+
+    fun applySchedPowerProfile(mode: String, conservativeDisplayState: Int): ShellResult {
+        val normalizedMode = when (mode.trim().lowercase()) {
+            "perf", "performance", "aggressive", "game" -> "aggressive"
+            else -> "conservative"
+        }
+        val safeState = conservativeDisplayState.coerceAtLeast(0)
+        val script = if (normalizedMode == "aggressive") {
+            """
+                set -e
+                echo aggressive > /proc/abk_sched_profile
+            """.trimIndent()
+        } else {
+            """
+                set -e
+                echo $safeState > /proc/abk_sched_display_conservative_state
+                echo conservative > /proc/abk_sched_profile
+            """.trimIndent()
+        }
+        return execRootScript(script, timeoutSeconds = 15L)
+    }
 
     fun readAbkControlStatus(): ShellResult {
         if (!isNativeManagerActive()) {
@@ -990,6 +1097,59 @@ object RootUtils {
         return moduleJson
     }
 
+    fun readAbkExtensionState(extensionId: String): String? {
+        val cleanId = sanitizeExtensionId(extensionId) ?: return null
+        val filePath = "$ABK_EXTENSION_STATE_DIR/$cleanId.json"
+        return try {
+            createRootShell(timeoutSeconds = 20L).use { shell ->
+                val result = execWithShell(
+                    shell = shell,
+                    script = """
+                        file=${shellQuote(filePath)}
+                        [ -f "${'$'}file" ] || exit 3
+                        base64 "${'$'}file" 2>/dev/null | tr -d '\n'
+                    """.trimIndent(),
+                    normalizeOutput = false
+                )
+                if (!result.success) return null
+                val encoded = result.output.joinToString("").trim()
+                if (encoded.isBlank()) "" else String(Base64.decode(encoded, Base64.DEFAULT))
+            }
+        } catch (_: Throwable) {
+            null
+        }
+    }
+
+    fun writeAbkExtensionState(extensionId: String, json: String): ShellResult {
+        val cleanId = sanitizeExtensionId(extensionId)
+            ?: return ShellResult(false, listOf(tr(R.string.extension_invalid_id)))
+        val payload = Base64.encodeToString(json.toByteArray(Charsets.UTF_8), Base64.NO_WRAP)
+        val script = """
+            set -e
+            dir=${shellQuote(ABK_EXTENSION_STATE_DIR)}
+            file="${'$'}dir/${cleanId}.json"
+            mkdir -p "${'$'}dir"
+            printf '%s' ${shellQuote(payload)} | base64 -d > "${'$'}file"
+            chmod 0600 "${'$'}file" 2>/dev/null || true
+            restorecon "${'$'}file" 2>/dev/null || true
+        """.trimIndent()
+        return execRootScript(script, timeoutSeconds = 30L)
+    }
+
+    fun clearAbkExtensionState(extensionId: String): ShellResult {
+        val cleanId = sanitizeExtensionId(extensionId)
+            ?: return ShellResult(false, listOf(tr(R.string.extension_invalid_id)))
+        val script = """
+            rm -f ${shellQuote("$ABK_EXTENSION_STATE_DIR/$cleanId.json")}
+        """.trimIndent()
+        return execRootScript(script, timeoutSeconds = 15L)
+    }
+
+    private fun sanitizeExtensionId(value: String): String? {
+        val clean = value.trim()
+        return clean.takeIf { it.isNotBlank() && SAFE_EXTENSION_ID.matches(it) }
+    }
+
     private fun abkMetaMountPlaceholderScript(): String = """
         set -e
         MOD=${shellQuote(ABK_META_MOUNT_DIR)}
@@ -1053,6 +1213,11 @@ object RootUtils {
     private fun isAbkMetaMountModuleDir(moduleDir: String): Boolean =
         moduleDir.trim().trimEnd('/') == ABK_META_MOUNT_DIR
 
+    private data class ApkArchiveMetadata(
+        val packageName: String,
+        val versionCode: Long?
+    )
+
     @Suppress("DEPRECATION")
     private fun installedApplications(packageManager: PackageManager): List<ApplicationInfo> =
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
@@ -1060,6 +1225,59 @@ object RootUtils {
         } else {
             packageManager.getInstalledApplications(0)
         }
+
+    @Suppress("DEPRECATION")
+    private fun apkArchiveMetadata(packageManager: PackageManager, apkPath: String): ApkArchiveMetadata? {
+        val info = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            packageManager.getPackageArchiveInfo(apkPath, PackageManager.PackageInfoFlags.of(0))
+        } else {
+            packageManager.getPackageArchiveInfo(apkPath, 0)
+        } ?: return null
+        val packageName = info.packageName?.trim().orEmpty()
+        if (packageName.isBlank()) return null
+        val versionCode = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            info.longVersionCode
+        } else {
+            info.versionCode.toLong()
+        }
+        return ApkArchiveMetadata(packageName, versionCode)
+    }
+
+    @Suppress("DEPRECATION")
+    private fun installedPackageVersionCode(
+        packageManager: PackageManager,
+        packageName: String
+    ): Long? {
+        if (packageName.isBlank()) return null
+        return try {
+            val info = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                packageManager.getPackageInfo(packageName, PackageManager.PackageInfoFlags.of(0))
+            } else {
+                packageManager.getPackageInfo(packageName, 0)
+            }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                info.longVersionCode
+            } else {
+                info.versionCode.toLong()
+            }
+        } catch (_: NameNotFoundException) {
+            null
+        }
+    }
+
+    internal fun shouldRecoverSuccessfulApkInstall(
+        output: List<String>,
+        expectedVersionCode: Long?,
+        installedVersionCode: Long?
+    ): Boolean {
+        val sawInstallSuccess = output.any { line ->
+            val clean = line.trim()
+            clean == "Success" || clean.contains("管理器 APK 安装完成")
+        }
+        if (!sawInstallSuccess) return false
+        if (installedVersionCode == null) return false
+        return expectedVersionCode == null || installedVersionCode == expectedVersionCode
+    }
 
     private fun setProfileSepolicy(packageName: String, rules: String): Boolean {
         if (packageName.isBlank()) return false
@@ -1978,108 +2196,27 @@ object RootUtils {
 
     private fun shellQuote(value: String): String = "'${value.replace("'", "'\"'\"'")}'"
 
-    internal fun rewriteAnyKernelSlotSelect(
-        scriptContent: String,
+    internal fun normalizeBootSlotSuffix(slotSuffix: String?): String? = when (slotSuffix?.trim()?.lowercase()) {
+        "_a", "a" -> "_a"
+        "_b", "b" -> "_b"
+        else -> null
+    }
+
+    internal fun resolveAk3TargetSlotSuffix(
+        currentSlotSuffix: String?,
         targetSlot: Ak3SlotTarget
     ): String? {
-        val lineRegex = Regex("""(?m)^([ \t]*slot_select=)[^\r\n]*$""")
-        val match = lineRegex.find(scriptContent) ?: return null
-        return buildString {
-            append(scriptContent.substring(0, match.range.first))
-            append(match.groupValues[1])
-            append(targetSlot.slotSelectValue)
-            append(scriptContent.substring(match.range.last + 1))
+        val normalized = normalizeBootSlotSuffix(currentSlotSuffix) ?: return null
+        return when (targetSlot) {
+            Ak3SlotTarget.CURRENT -> normalized
+            Ak3SlotTarget.INACTIVE -> if (normalized == "_a") "_b" else "_a"
         }
     }
 
-    private fun prepareAnyKernel3Zip(
-        sourceZip: File,
-        targetSlot: Ak3SlotTarget,
-        workDir: File,
-        onOutput: ((String) -> Unit)?
-    ): File? {
-        val expandDir = File(workDir, "anykernel-src").apply {
-            deleteRecursively()
-            mkdirs()
-        }
-        unzipToDirectory(sourceZip, expandDir)
-        val anyKernelScript = expandDir.walkTopDown()
-            .firstOrNull { it.isFile && it.name.equals("anykernel.sh", ignoreCase = true) }
-        if (anyKernelScript == null) {
-            onOutput?.invoke("[ABK] AnyKernel3 缺少 anykernel.sh")
-            return null
-        }
-
-        val original = anyKernelScript.readText()
-        val rewritten = rewriteAnyKernelSlotSelect(original, targetSlot)
-        if (rewritten == null) {
-            return if (targetSlot == Ak3SlotTarget.CURRENT) {
-                onOutput?.invoke("[ABK] 未找到 slot_select，沿用 AK3 默认当前槽位行为")
-                sourceZip
-            } else {
-                onOutput?.invoke("[ABK] AnyKernel3 未声明 slot_select，无法切换到另一槽位")
-                null
-            }
-        }
-        if (rewritten == original) {
-            return sourceZip
-        }
-
-        anyKernelScript.writeText(rewritten)
-        onOutput?.invoke("[ABK] 已将 AnyKernel3 slot_select 设置为 ${targetSlot.slotSelectValue}")
-        val targetZip = File(workDir, "AnyKernel3-target.zip")
-        zipDirectory(expandDir, targetZip)
-        return targetZip
-    }
-
-    private fun unzipToDirectory(zipFile: File, outputDir: File) {
-        val outputCanonical = outputDir.canonicalFile
-        ZipInputStream(BufferedInputStream(FileInputStream(zipFile))).use { zip ->
-            var entry = zip.nextEntry
-            while (entry != null) {
-                val outputFile = File(outputDir, entry.name).canonicalFile
-                if (!outputFile.path.startsWith(outputCanonical.path + File.separator)) {
-                    throw SecurityException("Unsafe zip entry: ${entry.name}")
-                }
-                if (entry.isDirectory) {
-                    outputFile.mkdirs()
-                } else {
-                    outputFile.parentFile?.mkdirs()
-                    FileOutputStream(outputFile).use { output ->
-                        copyStream(zip, output)
-                    }
-                }
-                zip.closeEntry()
-                entry = zip.nextEntry
-            }
-        }
-    }
-
-    private fun zipDirectory(sourceDir: File, outputZip: File) {
-        val sourceCanonical = sourceDir.canonicalFile
-        ZipOutputStream(FileOutputStream(outputZip)).use { zip ->
-            sourceDir.walkTopDown()
-                .filter { it.isFile }
-                .forEach { file ->
-                    val relativePath = sourceCanonical.toPath().relativize(file.canonicalFile.toPath())
-                        .toString()
-                        .replace(File.separatorChar, '/')
-                    zip.putNextEntry(ZipEntry(relativePath))
-                    FileInputStream(file).use { input ->
-                        copyStream(input, zip)
-                    }
-                    zip.closeEntry()
-                }
-        }
-    }
-
-    private fun copyStream(input: InputStream, output: OutputStream) {
-        val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
-        while (true) {
-            val read = input.read(buffer)
-            if (read == -1) break
-            output.write(buffer, 0, read)
-        }
+    internal fun slotNameFromSuffix(slotSuffix: String?): String? = when (normalizeBootSlotSuffix(slotSuffix)) {
+        "_a" -> "a"
+        "_b" -> "b"
+        else -> null
     }
 
     private val AK3_FLASH_SCRIPT = """
@@ -2095,6 +2232,96 @@ unzip -p "${'$'}Z" 'META-INF/com/google/android/update-binary' > "${'$'}F/update
 chmod 755 "${'$'}F/busybox"
 "${'$'}F/busybox" chmod 755 "${'$'}F/update-binary"
 "${'$'}F/busybox" chown root:root "${'$'}F/busybox" "${'$'}F/update-binary" 2>/dev/null || true
+REAL_GETPROP="/system/bin/getprop"
+[ -x "${'$'}REAL_GETPROP" ] || REAL_GETPROP=${'$'}(command -v getprop 2>/dev/null || true)
+
+detect_slot_suffix() {
+  local slot=""
+  if [ -n "${'$'}REAL_GETPROP" ]; then
+    slot=${'$'}("${'$'}REAL_GETPROP" ro.boot.slot_suffix 2>/dev/null || true)
+    if [ -z "${'$'}slot" ]; then
+      slot=${'$'}("${'$'}REAL_GETPROP" ro.boot.slot 2>/dev/null || true)
+      [ -n "${'$'}slot" ] && slot="_${'$'}slot"
+    fi
+  fi
+  if [ -z "${'$'}slot" ]; then
+    slot=${'$'}(grep -o 'androidboot.slot_suffix=[^ ]*' /proc/cmdline 2>/dev/null | head -n1 | cut -d= -f2)
+  fi
+  if [ -z "${'$'}slot" ]; then
+    slot=${'$'}(grep -o 'androidboot.slot=[^ ]*' /proc/cmdline 2>/dev/null | head -n1 | cut -d= -f2)
+    [ -n "${'$'}slot" ] && slot="_${'$'}slot"
+  fi
+  if [ -z "${'$'}slot" ]; then
+    local bootctl_bin="/system/bin/bootctl"
+    [ -x "${'$'}bootctl_bin" ] || bootctl_bin=${'$'}(command -v bootctl 2>/dev/null || true)
+    if [ -n "${'$'}bootctl_bin" ]; then
+      case ${'$'}("${'$'}bootctl_bin" get-current-slot 2>/dev/null | tr -d '\r' | tail -n1) in
+        0|a|A|_a) slot="_a" ;;
+        1|b|B|_b) slot="_b" ;;
+      esac
+    fi
+  fi
+  case "${'$'}slot" in
+    _a|_b) printf '%s\n' "${'$'}slot" ;;
+    a|b) printf '_%s\n' "${'$'}slot" ;;
+    *) return 1 ;;
+  esac
+}
+
+slot_name_from_suffix() {
+  case "${'$'}1" in
+    _a|a) printf 'a\n' ;;
+    _b|b) printf 'b\n' ;;
+    *) return 1 ;;
+  esac
+}
+
+if [ "${'$'}{AK3_TARGET_SLOT_MODE:-active}" = "inactive" ]; then
+  ACTUAL_SLOT_SUFFIX=${'$'}(detect_slot_suffix || true)
+  case "${'$'}ACTUAL_SLOT_SUFFIX" in
+    _a) TARGET_SLOT_SUFFIX="_b" ;;
+    _b) TARGET_SLOT_SUFFIX="_a" ;;
+    *)
+      echo "[ABK] 无法识别当前槽位，不能刷写另一槽位"
+      exit 3
+      ;;
+  esac
+  TARGET_SLOT_NAME=${'$'}(slot_name_from_suffix "${'$'}TARGET_SLOT_SUFFIX")
+  FAKEBIN="${'$'}F/fakebin"
+  mkdir -p "${'$'}FAKEBIN"
+  cat > "${'$'}FAKEBIN/getprop" <<'EOF'
+#!/system/bin/sh
+REAL_GETPROP="${'$'}{REAL_GETPROP:-/system/bin/getprop}"
+TARGET_SLOT_SUFFIX="${'$'}{TARGET_SLOT_SUFFIX:-}"
+TARGET_SLOT_NAME="${'$'}{TARGET_SLOT_NAME:-}"
+if [ "$#" -eq 0 ]; then
+  exec "${'$'}{REAL_GETPROP}"
+fi
+case "$1" in
+  ro.boot.slot_suffix)
+    [ -n "${'$'}{TARGET_SLOT_SUFFIX}" ] && { printf '%s\n' "${'$'}{TARGET_SLOT_SUFFIX}"; exit 0; }
+    ;;
+  ro.boot.slot)
+    [ -n "${'$'}{TARGET_SLOT_NAME}" ] && { printf '%s\n' "${'$'}{TARGET_SLOT_NAME}"; exit 0; }
+    ;;
+esac
+exec "${'$'}{REAL_GETPROP}" "$@"
+EOF
+  chmod 755 "${'$'}FAKEBIN/getprop"
+  export REAL_GETPROP TARGET_SLOT_SUFFIX TARGET_SLOT_NAME ACTUAL_SLOT_SUFFIX
+  export SLOT_SELECT=active
+  export slot_select=active
+  export BOOT_SLOT="${'$'}TARGET_SLOT_NAME"
+  export SLOT_SUFFIX="${'$'}TARGET_SLOT_SUFFIX"
+  export ABK_AK3_REAL_SLOT_SUFFIX="${'$'}ACTUAL_SLOT_SUFFIX"
+  export ABK_AK3_TARGET_SLOT_SUFFIX="${'$'}TARGET_SLOT_SUFFIX"
+  export ABK_AK3_TARGET_SLOT_NAME="${'$'}TARGET_SLOT_NAME"
+  export PATH="${'$'}FAKEBIN:${'$'}PATH"
+  echo "[ABK] 当前实际槽位: ${'$'}ACTUAL_SLOT_SUFFIX"
+  echo "[ABK] 已伪装 AK3 当前槽位为: ${'$'}TARGET_SLOT_SUFFIX"
+else
+  echo "[ABK] 使用系统当前槽位上下文"
+fi
 TMP="${'$'}F/tmp"
 echo "[ABK] 准备临时挂载点: ${'$'}TMP"
 "${'$'}F/busybox" umount "${'$'}TMP" 2>/dev/null || true
