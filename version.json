@@ -3,34 +3,34 @@
     "normal": {
       "versionName": "1.2.3",
       "versionCode": 10023,
-      "downloadUrl": "https://github.com/xingguangcuican6666/ABK/releases/download/app_v1.2.3/abk-app-abk-apks.zip"
+      "downloadUrl": "https://github.com/xingguangcuican6666/ABK/releases/download/app_v1.2.4/abk-app-abk-apks.zip"
     },
     "dev": {
       "versionName": "1.2.3-dev",
       "versionCode": 10023,
-      "downloadUrl": "https://github.com/xingguangcuican6666/ABK/releases/download/app_v1.2.3/abk-app-dev-abk-apks.zip"
+      "downloadUrl": "https://github.com/xingguangcuican6666/ABK/releases/download/app_v1.2.4/abk-app-dev-abk-apks.zip"
     }
   },
   "unstable": {
     "normal": {
-      "versionName": "1.2.3",
-      "versionCode": 10023,
+      "versionName": "1.2.4",
+      "versionCode": 10024,
       "downloadUrl": "https://nightly.link/xingguangcuican6666/ABK/workflows/build-abk-app/dev/abk-apks.zip",
-      "publishedAt": "2026-07-02T12:13:57Z",
-      "buildTimestampEpochMillis": 1782994437000,
+      "publishedAt": "2026-07-04T16:48:05Z",
+      "buildTimestampEpochMillis": 1783183685000,
       "sourceWorkflow": "Build ABK App",
-      "commitSha": "d93faa2e4daae78f0bdde16dd669d84e6fd1be54",
-      "runId": 28589123990
+      "commitSha": "d89730b0aa962fedd8453beab610aaa100f086e4",
+      "runId": 28712978578
     },
     "dev": {
-      "versionName": "1.2.3",
-      "versionCode": 10023,
+      "versionName": "1.2.4",
+      "versionCode": 10024,
       "downloadUrl": "https://nightly.link/xingguangcuican6666/ABK/workflows/build-abk-app-dev/dev/abk-apks.zip",
-      "publishedAt": "2026-07-02T12:13:54Z",
-      "buildTimestampEpochMillis": 1782994434000,
+      "publishedAt": "2026-07-04T16:48:08Z",
+      "buildTimestampEpochMillis": 1783183688000,
       "sourceWorkflow": "Build ABK App Dev",
-      "commitSha": "d93faa2e4daae78f0bdde16dd669d84e6fd1be54",
-      "runId": 28589124178
+      "commitSha": "d89730b0aa962fedd8453beab610aaa100f086e4",
+      "runId": 28712981823
     }
   }
 }

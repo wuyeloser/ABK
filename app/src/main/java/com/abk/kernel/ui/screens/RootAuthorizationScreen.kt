@@ -86,6 +86,8 @@ import coil.compose.AsyncImage
 import com.abk.kernel.R
 import com.abk.kernel.data.model.RootGrantApp
 import com.abk.kernel.data.model.RootGrantProfile
+import com.abk.kernel.ui.components.AbkCenteredLoadingTransition
+import com.abk.kernel.ui.components.AbkLoadingPill
 import com.abk.kernel.ui.components.AbkScreenHorizontalPadding
 import com.abk.kernel.ui.components.AppPageBackground
 import com.abk.kernel.ui.components.ObserveChildPageVisibility
@@ -140,6 +142,7 @@ fun RootAuthorizationScreen(
         label = "root-auth-detail"
     )
     val canLeaveDetail = state.rootGrantSavingPackage == null && !state.rootGrantDetailLoading
+    val showInitialLoading = state.rootGrantLoading && state.rootGrantApps.isEmpty()
     val scrollBehavior = TopAppBarDefaults.exitUntilCollapsedScrollBehavior(rememberTopAppBarState())
 
     LaunchedEffect(state.runtimeNavigationEnabled, state.abkRuntimeStatus?.runtimeBackend?.backend) {
@@ -198,6 +201,19 @@ fun RootAuthorizationScreen(
                 )
             }
         ) { padding ->
+            if (showInitialLoading) {
+                RootGrantInitialLoadingScreen(
+                    padding = padding,
+                    outerPadding = outerPadding,
+                    query = query,
+                    onQueryChange = { query = it },
+                    showSystemApps = showSystemApps,
+                    onShowSystemAppsChange = { showSystemApps = it },
+                    modifier = Modifier.nestedScroll(scrollBehavior.nestedScrollConnection)
+                )
+                return@Scaffold
+            }
+
             LazyColumn(
                 modifier = Modifier
                     .padding(padding)
@@ -211,42 +227,17 @@ fun RootAuthorizationScreen(
                 verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
                 item(key = "search") {
-                    OutlinedTextField(
-                        value = query,
-                        onValueChange = { query = it },
-                        modifier = Modifier.fillMaxWidth(),
-                        leadingIcon = { Icon(Icons.Default.Search, null) },
-                        placeholder = { Text(stringResource(R.string.root_auth_search_apps)) },
-                        singleLine = true,
-                        shape = RoundedCornerShape(14.dp)
+                    RootGrantSearchField(
+                        query = query,
+                        onQueryChange = { query = it }
                     )
                 }
 
                 item(key = "controls") {
-                    ExpressiveSectionCard(
-                        title = stringResource(R.string.root_auth_section_title),
-                        subtitle = stringResource(R.string.root_auth_section_desc),
-                        icon = Icons.Default.AdminPanelSettings
-                    ) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Text(
-                                text = stringResource(R.string.root_auth_show_system_apps),
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = MaterialTheme.colorScheme.onSurface
-                            )
-                            Switch(checked = showSystemApps, onCheckedChange = { showSystemApps = it })
-                        }
-                    }
-                }
-
-                if (state.rootGrantLoading && state.rootGrantApps.isEmpty()) {
-                    item(key = "initial-loading") {
-                        RootGrantInitialLoading()
-                    }
+                    RootGrantControlsCard(
+                        showSystemApps = showSystemApps,
+                        onShowSystemAppsChange = { showSystemApps = it }
+                    )
                 }
 
                 if (state.rootGrantLoading && state.rootGrantApps.isNotEmpty()) {
@@ -365,41 +356,103 @@ fun RootAuthorizationScreen(
 }
 
 @Composable
-private fun RootGrantInitialLoading() {
-    Box(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(vertical = 48.dp),
-        contentAlignment = Alignment.Center
+private fun RootGrantInitialLoadingScreen(
+    padding: PaddingValues,
+    outerPadding: PaddingValues,
+    query: String,
+    onQueryChange: (String) -> Unit,
+    showSystemApps: Boolean,
+    onShowSystemAppsChange: (Boolean) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Column(
+        modifier = modifier
+            .padding(padding)
+            .fillMaxSize()
+            .padding(
+                start = AbkScreenHorizontalPadding,
+                top = 0.dp,
+                end = AbkScreenHorizontalPadding,
+                bottom = 80.dp + outerPadding.calculateBottomPadding()
+            ),
+        verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
-        Column(
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(10.dp)
+        RootGrantSearchField(
+            query = query,
+            onQueryChange = onQueryChange
+        )
+        RootGrantControlsCard(
+            showSystemApps = showSystemApps,
+            onShowSystemAppsChange = onShowSystemAppsChange
+        )
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .weight(1f),
+            contentAlignment = Alignment.Center
         ) {
-            LoadingIndicator(Modifier.size(42.dp))
-            Text(
-                text = stringResource(R.string.root_auth_building_list),
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
+            RootGrantInitialLoading()
         }
     }
 }
 
 @Composable
+private fun RootGrantSearchField(
+    query: String,
+    onQueryChange: (String) -> Unit
+) {
+    OutlinedTextField(
+        value = query,
+        onValueChange = onQueryChange,
+        modifier = Modifier.fillMaxWidth(),
+        leadingIcon = { Icon(Icons.Default.Search, null) },
+        placeholder = { Text(stringResource(R.string.root_auth_search_apps)) },
+        singleLine = true,
+        shape = RoundedCornerShape(14.dp)
+    )
+}
+
+@Composable
+private fun RootGrantControlsCard(
+    showSystemApps: Boolean,
+    onShowSystemAppsChange: (Boolean) -> Unit
+) {
+    ExpressiveSectionCard(
+        title = stringResource(R.string.root_auth_section_title),
+        subtitle = stringResource(R.string.root_auth_section_desc),
+        icon = Icons.Default.AdminPanelSettings
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                text = stringResource(R.string.root_auth_show_system_apps),
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurface
+            )
+            Switch(checked = showSystemApps, onCheckedChange = onShowSystemAppsChange)
+        }
+    }
+}
+
+@Composable
+private fun RootGrantInitialLoading() {
+    AbkLoadingPill(text = stringResource(R.string.loading))
+}
+
+@Composable
 private fun RootGrantRefreshingRow() {
-    Row(
+    Box(
         modifier = Modifier
             .fillMaxWidth()
             .padding(vertical = 4.dp),
-        horizontalArrangement = Arrangement.spacedBy(10.dp),
-        verticalAlignment = Alignment.CenterVertically
+        contentAlignment = Alignment.Center
     ) {
-        LoadingIndicator(Modifier.size(24.dp))
-        Text(
-            text = stringResource(R.string.root_auth_refreshing_list),
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
+        AbkLoadingPill(
+            text = stringResource(R.string.loading),
+            compact = true
         )
     }
 }
@@ -408,25 +461,13 @@ private fun RootGrantRefreshingRow() {
 private fun RootGrantDetailLoadingPage(
     padding: PaddingValues
 ) {
-    Box(
+    AbkCenteredLoadingTransition(
+        text = stringResource(R.string.loading),
         modifier = Modifier
             .padding(padding)
             .fillMaxSize()
-            .padding(horizontal = AbkScreenHorizontalPadding),
-        contentAlignment = Alignment.Center
-    ) {
-        Column(
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(10.dp)
-        ) {
-            LoadingIndicator(Modifier.size(42.dp))
-            Text(
-                text = stringResource(R.string.root_auth_loading_profile),
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-        }
-    }
+            .padding(horizontal = AbkScreenHorizontalPadding)
+    )
 }
 
 @Composable

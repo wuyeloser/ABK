@@ -3,6 +3,7 @@
 package com.abk.kernel.ui.screens
 
 import android.app.Activity
+import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.os.Build
@@ -58,6 +59,8 @@ import com.abk.kernel.utils.DownloadDirectoryUtils
 import com.abk.kernel.utils.DownloadUtils
 import com.abk.kernel.utils.LocaleHelper
 import com.abk.kernel.ui.components.AbkScreenHorizontalPadding
+import com.abk.kernel.ui.components.AbkSegmentedButtonOption
+import com.abk.kernel.ui.components.AbkSingleChoiceSegmentedButtonRow
 import com.abk.kernel.ui.components.AppPageBackground
 import com.abk.kernel.ui.components.ObserveChildPageVisibility
 import com.abk.kernel.ui.components.childPageOverlayEnterTransition
@@ -85,7 +88,9 @@ import com.abk.kernel.data.model.normalizeAppUpdateLine
 import com.abk.kernel.data.model.normalizeAppUpdateStability
 import com.abk.kernel.viewmodel.MainUiState
 import com.abk.kernel.viewmodel.MainViewModel
+import com.abk.kernel.viewmodel.exportDiagnosticBundle
 import java.io.File
+import kotlinx.coroutines.launch
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalMaterial3ExpressiveApi::class)
 @Composable
 fun SettingsScreen(
@@ -96,7 +101,9 @@ fun SettingsScreen(
 ) {
     val state by vm.uiState.collectAsState()
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
     var showLogoutDialog by remember { mutableStateOf(false) }
+    var exportingDiagnostics by remember { mutableStateOf(false) }
     var showThemeSettings by rememberSaveable { mutableStateOf(false) }
     var showAppProfileTemplates by rememberSaveable { mutableStateOf(false) }
     var showManagerTools by rememberSaveable { mutableStateOf(false) }
@@ -216,6 +223,36 @@ fun SettingsScreen(
         showExtensionManagerPage = true
     }
 
+    fun exportDiagnostics() {
+        if (exportingDiagnostics) return
+        scope.launch {
+            exportingDiagnostics = true
+            runCatching {
+                exportDiagnosticBundle(context, state)
+            }.onSuccess { result ->
+                shareDiagnosticBundle(context, result.zipFile)
+                if (result.warnings.isNotEmpty()) {
+                    vm.showSnackbar(
+                        context.getString(
+                            R.string.settings_export_diagnostics_partial,
+                            result.warnings.size
+                        ),
+                        longDuration = true
+                    )
+                }
+            }.onFailure { error ->
+                vm.showSnackbar(
+                    context.getString(
+                        R.string.settings_export_diagnostics_failed,
+                        error.message ?: error::class.java.simpleName
+                    ),
+                    longDuration = true
+                )
+            }
+            exportingDiagnostics = false
+        }
+    }
+
     if (showLogoutDialog) {
         AlertDialog(
             onDismissRequest = { showLogoutDialog = false },
@@ -263,7 +300,9 @@ fun SettingsScreen(
                 onOpenInstalledModules = onOpenInstalledModules,
                 onAbout = ::openAboutPage,
                 onOpenSourceLicenses = ::openOpenSourceLicenses,
-                onOpenExtensionManager = ::openExtensionManagerPage
+                onOpenExtensionManager = ::openExtensionManagerPage,
+                exportingDiagnostics = exportingDiagnostics,
+                onExportDiagnostics = ::exportDiagnostics
             )
         }
 
@@ -546,7 +585,9 @@ private fun SettingsMainContent(
     onOpenInstalledModules: () -> Unit,
     onAbout: () -> Unit,
     onOpenSourceLicenses: () -> Unit,
-    onOpenExtensionManager: () -> Unit
+    onOpenExtensionManager: () -> Unit,
+    exportingDiagnostics: Boolean,
+    onExportDiagnostics: () -> Unit
 ) {
     val context = LocalContext.current
     Column(
@@ -842,6 +883,23 @@ private fun SettingsMainContent(
                     )
                 },
                 onClick = onOpenSourceLicenses
+            )
+            ExpressiveListItem(
+                title = stringResource(R.string.settings_export_diagnostics),
+                subtitle = stringResource(R.string.settings_export_diagnostics_desc),
+                leadingIcon = Icons.Default.BugReport,
+                enabled = !exportingDiagnostics,
+                trailingContent = {
+                    if (exportingDiagnostics) {
+                        LoadingIndicator(Modifier.size(20.dp))
+                    } else {
+                        Icon(
+                            Icons.Default.Share,
+                            contentDescription = stringResource(R.string.settings_export)
+                        )
+                    }
+                },
+                onClick = onExportDiagnostics
             )
         }
 
@@ -2018,6 +2076,24 @@ private fun launchAppUpdateInstaller(context: android.content.Context, apkPath: 
         }
 }
 
+private fun shareDiagnosticBundle(context: Context, zipFile: File) {
+    val uri = FileProvider.getUriForFile(
+        context,
+        "${context.packageName}.fileprovider",
+        zipFile
+    )
+    val intent = Intent(Intent.ACTION_SEND).apply {
+        type = "application/zip"
+        putExtra(Intent.EXTRA_STREAM, uri)
+        putExtra(Intent.EXTRA_SUBJECT, zipFile.name)
+        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+    }
+    context.startActivity(
+        Intent.createChooser(intent, context.getString(R.string.settings_export_diagnostics_share))
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+    )
+}
+
 @Composable
 private fun SettingsHero(
     login: String?,
@@ -2115,8 +2191,14 @@ private fun AppUpdateStabilityPicker(
     onSelect: (String) -> Unit
 ) {
     val options = listOf(
-        APP_UPDATE_STABILITY_STABLE to stringResource(R.string.settings_app_update_stable),
-        APP_UPDATE_STABILITY_UNSTABLE to stringResource(R.string.settings_app_update_unstable)
+        AbkSegmentedButtonOption(
+            value = APP_UPDATE_STABILITY_STABLE,
+            label = stringResource(R.string.settings_app_update_stable)
+        ),
+        AbkSegmentedButtonOption(
+            value = APP_UPDATE_STABILITY_UNSTABLE,
+            label = stringResource(R.string.settings_app_update_unstable)
+        )
     )
     Column(
         modifier = Modifier
@@ -2131,19 +2213,12 @@ private fun AppUpdateStabilityPicker(
             style = MaterialTheme.typography.labelLarge,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            options.forEach { (value, label) ->
-                FilterChip(
-                    selected = normalizeAppUpdateStability(selected) == value,
-                    onClick = { onSelect(value) },
-                    label = { Text(label, maxLines = 1) },
-                    modifier = Modifier.weight(1f)
-                )
-            }
-        }
+        AbkSingleChoiceSegmentedButtonRow(
+            options = options,
+            selectedValue = normalizeAppUpdateStability(selected),
+            onSelect = onSelect,
+            modifier = Modifier.fillMaxWidth()
+        )
     }
 }
 
@@ -2153,8 +2228,14 @@ private fun AppUpdateLinePicker(
     onSelect: (String) -> Unit
 ) {
     val options = listOf(
-        APP_UPDATE_LINE_NORMAL to stringResource(R.string.settings_app_update_line_normal),
-        APP_UPDATE_LINE_DEV to stringResource(R.string.settings_app_update_line_dev)
+        AbkSegmentedButtonOption(
+            value = APP_UPDATE_LINE_NORMAL,
+            label = stringResource(R.string.settings_app_update_line_normal)
+        ),
+        AbkSegmentedButtonOption(
+            value = APP_UPDATE_LINE_DEV,
+            label = stringResource(R.string.settings_app_update_line_dev)
+        )
     )
     Column(
         modifier = Modifier
@@ -2169,19 +2250,12 @@ private fun AppUpdateLinePicker(
             style = MaterialTheme.typography.labelLarge,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            options.forEach { (value, label) ->
-                FilterChip(
-                    selected = normalizeAppUpdateLine(selected) == value,
-                    onClick = { onSelect(value) },
-                    label = { Text(label, maxLines = 1) },
-                    modifier = Modifier.weight(1f)
-                )
-            }
-        }
+        AbkSingleChoiceSegmentedButtonRow(
+            options = options,
+            selectedValue = normalizeAppUpdateLine(selected),
+            onSelect = onSelect,
+            modifier = Modifier.fillMaxWidth()
+        )
     }
 }
 
@@ -2239,6 +2313,14 @@ private fun WorkflowForegroundRefreshIntervalPicker(
     selectedSec: Int,
     onSelect: (Int) -> Unit
 ) {
+    val options = PreferencesRepository.WORKFLOW_FOREGROUND_REFRESH_INTERVALS_SEC
+        .sorted()
+        .map { sec ->
+            AbkSegmentedButtonOption(
+                value = sec,
+                label = stringResource(R.string.settings_workflow_foreground_refresh_interval_sec, sec)
+            )
+        }
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -2252,24 +2334,12 @@ private fun WorkflowForegroundRefreshIntervalPicker(
             style = MaterialTheme.typography.labelLarge,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            PreferencesRepository.WORKFLOW_FOREGROUND_REFRESH_INTERVALS_SEC.sorted().forEach { sec ->
-                FilterChip(
-                    selected = selectedSec == sec,
-                    onClick = { onSelect(sec) },
-                    label = {
-                        Text(
-                            stringResource(R.string.settings_workflow_foreground_refresh_interval_sec, sec),
-                            maxLines = 1
-                        )
-                    },
-                    modifier = Modifier.weight(1f)
-                )
-            }
-        }
+        AbkSingleChoiceSegmentedButtonRow(
+            options = options,
+            selectedValue = selectedSec,
+            onSelect = onSelect,
+            modifier = Modifier.fillMaxWidth()
+        )
     }
 }
 
