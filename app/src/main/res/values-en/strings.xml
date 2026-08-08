@@ -60,6 +60,10 @@
     <string name="root_local_capability_desc">Root is used only when flashing, installing modules, or checking root-related capabilities. Kernel version detection does not require root.</string>
     <string name="root_after_auth_flow">After authorization, GitHub sign-in and fork checks start automatically.</string>
 
+    <!-- Local preferences recovery -->
+    <string name="preferences_reset_title">Local data was reset</string>
+    <string name="preferences_reset_message">ABK detected corrupted local preferences and reset them automatically. Your saved login state, build configuration, and other local settings may need to be configured again.</string>
+
     <!-- Auth -->
     <string name="login_title">Sign in to GitHub</string>
     <string name="login_desc">ABK needs GitHub authorization to manage the fork repository and trigger kernel build workflows.</string>
@@ -190,12 +194,26 @@
     <string name="build_enable_kpm">Enable KPM</string>
     <string name="build_enable_rekernel">Enable Re-Kernel driver (test)</string>
     <string name="build_virtualization_support">Virtualization support</string>
+    <string name="build_section_kernel_options_desc">Override defconfig entry by entry. Supports y / m / off / ignore / raw value, and takes priority over the built-in page switches.</string>
+    <string name="build_kernel_options_summary">%1$d total · enabled %2$d · disabled %3$d · ignored %4$d</string>
+    <string name="build_kernel_option_search">Search CONFIG_*, raw value, or mode</string>
+    <string name="build_kernel_option_no_matching">No kernel options match the current search.</string>
+    <string name="build_kernel_option_menu">Kernel option actions</string>
+    <string name="build_kernel_option_clear">Clear kernel options</string>
+    <string name="build_kernel_option_clear_title">Clear custom kernel options</string>
+    <string name="build_kernel_option_clear_filtered_confirm">This will delete %1$d filtered entries. This cannot be undone.</string>
+    <string name="build_kernel_option_clear_all_confirm">This will delete all %1$d entries. This cannot be undone.</string>
+    <string name="build_kernel_option_clear_no_matching">No matches were found. Check the box below to clear all %1$d entries.</string>
+    <string name="build_kernel_option_clear_toggle_all">Also clear all %1$d entries</string>
+    <string name="build_kernel_option_clear_filtered_action">Clear filtered</string>
+    <string name="build_kernel_option_clear_all_action">Clear all</string>
     <string name="build_enable_oneplus_8e">Enable OnePlus 8E support</string>
     <string name="build_oneplus_lz4kd">Enable lz4kd</string>
+    <string name="build_oneplus_lz4kd_unsupported">Kernel 6.12 uses the new ZRAM backend and does not support the legacy lz4kd patch.</string>
     <string name="build_oneplus_bbr">Enable BBR</string>
     <string name="build_oneplus_proxy_optimization">Enable proxy optimization</string>
     <string name="build_oneplus_proxy_mtk_disabled">Proxy optimization is forced off for MTK branches.</string>
-    <string name="build_oneplus_susfs_unsupported">The current OnePlus KMI has no available SUSFS upstream branch. Only android14/6.1 and android15/6.6 are supported; android12/5.10 and android13/5.15 are disabled automatically.</string>
+    <string name="build_oneplus_susfs_unsupported">The current OnePlus KMI has no available SUSFS upstream branch. android12/5.10 and android13/5.15 are disabled automatically.</string>
     <string name="build_oneplus_unicode_bypass">Enable Unicode zero-width bypass fix</string>
     <string name="build_oneplus_proxy_short">Proxy optimization</string>
     <string name="build_oneplus_unicode_short">Unicode bypass</string>
@@ -612,6 +630,7 @@
     <string name="settings_logout_desc">Sign out</string>
     <string name="settings_fork_repo">Fork repository</string>
     <string name="settings_not_logged_in">Not signed in</string>
+    <string name="settings_login_hint">Tap to sign in with GitHub</string>
     <string name="settings_auto_download_desc">Applies only to the next newly submitted build. Turning it off will not auto-download.</string>
     <string name="settings_prebuilt_gki">Prebuilt GKI fetch and download</string>
     <string name="settings_prebuilt_gki_desc">Fetch prebuilt GKI from this repository release. Downloads are manual.</string>
@@ -710,6 +729,7 @@
     <string name="settings_group_backend_desc">Load dynamically from current %1$s backend capabilities.</string>
     <string name="settings_group_manager_settings_desc">Load dynamically from current KSU backend capabilities.</string>
     <string name="settings_group_kernel_capabilities_desc">Load dynamically from root access and built-in kernel capabilities.</string>
+    <string name="settings_group_tcp_congestion_control_desc">Load dynamically from TCP congestion control capabilities exposed by the kernel.</string>
     <string name="settings_group_system_tools_desc">Tools for SELinux and module umount paths.</string>
     <string name="settings_group_allowlist_desc">Export or import the current root authorization list.</string>
     <string name="settings_group_tool_status_desc">Result of the most recent tool operation.</string>
@@ -939,6 +959,15 @@
     <string name="settings_tools_desc">More advanced features</string>
     <string name="settings_manager_settings">Manager settings</string>
     <string name="settings_kernel_capabilities">Kernel capabilities</string>
+    <string name="settings_kernel_capabilities_summary">TCP current %1$s · %2$d algorithms</string>
+    <string name="settings_kernel_capabilities_refreshing">Refreshing kernel capabilities</string>
+    <string name="settings_kernel_capabilities_unavailable">No manageable kernel capabilities detected</string>
+    <string name="settings_kernel_capabilities_unavailable_desc">The current kernel does not expose additional features ABK can manage.</string>
+    <string name="settings_tcp_congestion_control">TCP congestion control</string>
+    <string name="settings_tcp_congestion_current">Current algorithm</string>
+    <string name="settings_tcp_congestion_available">Available algorithm</string>
+    <string name="settings_tcp_congestion_selected">Currently active</string>
+    <string name="settings_tcp_congestion_change_failed">Failed to change TCP algorithm</string>
     <string name="settings_susfs_control">SUSFS control</string>
     <string name="settings_manager_loading_title">Reading backend settings</string>
     <string name="settings_manager_loading_desc">Loading available features from the current KSU backend</string>
@@ -1203,6 +1232,10 @@
     <string name="ru_unknown_su_compat">Unknown su compatibility mode</string>
     <string name="ru_unknown_feature">Unknown feature</string>
     <string name="ru_invalid_template_name">Invalid template name</string>
+    <string name="ru_tcp_congestion_invalid_algorithm">Invalid TCP algorithm name</string>
+    <string name="ru_tcp_congestion_unavailable">The current kernel does not expose TCP congestion control</string>
+    <string name="ru_tcp_congestion_unsupported_algorithm">The current kernel does not support this TCP algorithm</string>
+    <string name="ru_tcp_congestion_write_failed">Failed to write TCP algorithm</string>
     <string name="ru_ksud_args_empty">ksud arguments are empty</string>
     <string name="ru_legacy_su_toggle_failed">Failed to toggle legacy su command support</string>
     <string name="ru_hide_selinux_toggle_failed">Failed to toggle hide-SELinux-modifications: %1$d</string>

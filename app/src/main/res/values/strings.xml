@@ -60,6 +60,10 @@
     <string name="root_local_capability_desc">只在需要刷写、安装模块和检测 Root 相关能力时调用 Root。内核版本识别不依赖 Root。</string>
     <string name="root_after_auth_flow">授权后会自动进入 GitHub 登录和 fork 检查流程。</string>
 
+    <!-- Local preferences recovery -->
+    <string name="preferences_reset_title">本地数据已重置</string>
+    <string name="preferences_reset_message">检测到 ABK 本地配置数据库损坏，已自动重置。已保存的登录状态、构建配置和其他本地设置可能需要重新配置。</string>
+
     <!-- Auth -->
     <string name="login_title">登录 GitHub</string>
     <string name="login_desc">ABK 需要您的 GitHub 授权以管理 fork 仓库并触发内核构建工作流。</string>
@@ -216,12 +220,25 @@
     <string name="build_kernel_option_import_failed">导入自定义内核选项失败</string>
     <string name="build_kernel_option_import_read_failed">读取导入文件失败</string>
     <string name="build_kernel_option_save_failed">保存自定义内核选项失败</string>
+    <string name="build_kernel_options_summary">%1$d 条 · 启用 %2$d · 禁用 %3$d · 忽略 %4$d</string>
+    <string name="build_kernel_option_search">搜索 CONFIG_*、原始值或模式</string>
+    <string name="build_kernel_option_no_matching">没有匹配当前搜索的内核选项。</string>
+    <string name="build_kernel_option_menu">内核选项操作</string>
+    <string name="build_kernel_option_clear">清理内核选项</string>
+    <string name="build_kernel_option_clear_title">清理自定义内核选项</string>
+    <string name="build_kernel_option_clear_filtered_confirm">将删除当前筛选结果中的 %1$d 条条目。此操作不可撤销。</string>
+    <string name="build_kernel_option_clear_all_confirm">将删除全部 %1$d 条条目。此操作不可撤销。</string>
+    <string name="build_kernel_option_clear_no_matching">当前搜索没有匹配结果。可勾选下方选项后清理全部 %1$d 条条目。</string>
+    <string name="build_kernel_option_clear_toggle_all">同时清理全部 %1$d 条条目</string>
+    <string name="build_kernel_option_clear_filtered_action">清理筛选结果</string>
+    <string name="build_kernel_option_clear_all_action">清理全部</string>
     <string name="build_enable_oneplus_8e">启用一加 8E 支持</string>
     <string name="build_oneplus_lz4kd">启用 lz4kd</string>
+    <string name="build_oneplus_lz4kd_unsupported">6.12 使用新式 ZRAM backend，不支持 legacy lz4kd 补丁。</string>
     <string name="build_oneplus_bbr">启用 BBR</string>
     <string name="build_oneplus_proxy_optimization">启用代理优化</string>
     <string name="build_oneplus_proxy_mtk_disabled">MTK 分支已强制关闭代理优化。</string>
-    <string name="build_oneplus_susfs_unsupported">当前 OnePlus KMI 没有可用的 SUSFS 上游分支；仅 android14/6.1 与 android15/6.6 支持，android12/5.10 和 android13/5.15 会自动关闭。</string>
+    <string name="build_oneplus_susfs_unsupported">当前 OnePlus KMI 没有可用的 SUSFS 上游分支；android12/5.10 和 android13/5.15 会自动关闭。</string>
     <string name="build_oneplus_unicode_bypass">启用 Unicode 零宽绕过修复</string>
     <string name="build_oneplus_proxy_short">代理优化</string>
     <string name="build_oneplus_unicode_short">Unicode 绕过</string>
@@ -642,6 +659,7 @@
     <string name="settings_logout_desc">退出登录</string>
     <string name="settings_fork_repo">Fork 仓库</string>
     <string name="settings_not_logged_in">未登录</string>
+    <string name="settings_login_hint">点击前往登录 GitHub 账户</string>
     <string name="settings_auto_download_desc">仅对下一次新提交的构建生效，关闭后不会自动下载</string>
     <string name="settings_prebuilt_gki">预编译 GKI 获取与下载</string>
     <string name="settings_prebuilt_gki_desc">从本仓库 Release 获取预编译 GKI，下载需手动触发</string>
@@ -742,6 +760,7 @@
     <string name="settings_group_backend_desc">按当前 %1$s 后端能力动态加载。</string>
     <string name="settings_group_manager_settings_desc">按当前 KSU 后端能力动态加载。</string>
     <string name="settings_group_kernel_capabilities_desc">按 root 与内核内置能力动态加载。</string>
+    <string name="settings_group_tcp_congestion_control_desc">按内核暴露的 TCP 拥塞控制能力动态加载。</string>
     <string name="settings_group_system_tools_desc">SELinux 和模块卸载路径相关工具。</string>
     <string name="settings_group_allowlist_desc">导出或导入当前 Root 授权列表。</string>
     <string name="settings_group_tool_status_desc">最近一次工具操作的执行结果。</string>
@@ -978,6 +997,15 @@
     <string name="settings_tools_desc">更多高级功能</string>
     <string name="settings_manager_settings">管理器设置</string>
     <string name="settings_kernel_capabilities">内核能力</string>
+    <string name="settings_kernel_capabilities_summary">TCP 当前 %1$s · %2$d 个算法</string>
+    <string name="settings_kernel_capabilities_refreshing">正在刷新内核能力</string>
+    <string name="settings_kernel_capabilities_unavailable">未检测到可管理的内核能力</string>
+    <string name="settings_kernel_capabilities_unavailable_desc">当前内核没有暴露 ABK 可管理的附加功能。</string>
+    <string name="settings_tcp_congestion_control">TCP 拥塞控制</string>
+    <string name="settings_tcp_congestion_current">当前算法</string>
+    <string name="settings_tcp_congestion_available">可用算法</string>
+    <string name="settings_tcp_congestion_selected">当前使用</string>
+    <string name="settings_tcp_congestion_change_failed">TCP 算法切换失败</string>
     <string name="settings_susfs_control">SUSFS 控制</string>
     <string name="settings_manager_loading_title">正在读取后端设置</string>
     <string name="settings_manager_loading_desc">从当前 KSU 后端加载可用功能</string>
@@ -1276,6 +1304,10 @@
     <string name="ru_unknown_su_compat">未知 su 兼容模式</string>
     <string name="ru_unknown_feature">未知 Feature</string>
     <string name="ru_invalid_template_name">模板名称无效</string>
+    <string name="ru_tcp_congestion_invalid_algorithm">TCP 算法名称无效</string>
+    <string name="ru_tcp_congestion_unavailable">当前内核未暴露 TCP 拥塞控制接口</string>
+    <string name="ru_tcp_congestion_unsupported_algorithm">当前内核不支持这个 TCP 算法</string>
+    <string name="ru_tcp_congestion_write_failed">TCP 算法写入失败</string>
     <string name="ru_ksud_args_empty">ksud 参数为空</string>
     <string name="ru_legacy_su_toggle_failed">传统 su 命令支持切换失败</string>
     <string name="ru_hide_selinux_toggle_failed">隐藏 SELinux 修改切换失败: %1$d</string>
