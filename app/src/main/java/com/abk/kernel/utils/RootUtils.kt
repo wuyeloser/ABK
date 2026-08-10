@@ -21,6 +21,7 @@ import com.topjohnwu.superuser.CallbackList
 import com.topjohnwu.superuser.Shell
 import org.json.JSONObject
 import java.io.File
+import java.io.IOException
 import java.util.Collections
 import java.util.Properties
 import java.security.MessageDigest
@@ -476,7 +477,8 @@ object RootUtils {
         allowShell: Boolean = false,
         enableAdb: Boolean = false,
         localModulePath: String? = null,
-        onOutput: ((String) -> Unit)? = null
+        onOutput: ((String) -> Unit)? = null,
+        downloadDirectory: String? = null
     ): BootPatchResult {
         val sourceBoot = bootImagePath
             ?.takeIf { it.isNotBlank() }
@@ -511,10 +513,19 @@ object RootUtils {
                 stageBundledAbkLkmAsset(context, workDir, checkNotNull(asset))
             }
 
-            val outputDir = File(
-                context.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS) ?: context.filesDir,
-                "abk-patched"
-            ).apply { mkdirs() }
+            val appScopedOutputCandidates = listOfNotNull(
+                context.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS)
+                    ?.let { File(it, "abk-patched") },
+                File(context.filesDir, "abk-patched")
+            )
+            val outputDir = (if (flash) null else resolvePatchOutputDir(downloadDirectory))
+                ?: appScopedOutputCandidates.firstNotNullOfOrNull(::prepareWritableDirectory)
+                ?: throw IOException(
+                    tr(R.string.download_directory_create_failed, context.filesDir.absolutePath)
+                )
+            if (!flash) {
+                onOutput?.invoke(tr(R.string.ru_log_output_dir, outputDir.absolutePath))
+            }
             val moduleName = (asset?.let { "${it.variantId}-${it.kmi}" } ?: moduleFile.nameWithoutExtension)
                 .replace(Regex("""[^A-Za-z0-9._-]"""), "_")
             val outputName = "abk-${moduleName}-patched-${System.currentTimeMillis()}.img"
@@ -2264,6 +2275,18 @@ object RootUtils {
         target.setReadable(true, false)
         target.setWritable(true, true)
         return target
+    }
+
+    internal fun resolvePatchOutputDir(downloadDirectory: String?): File? {
+        val root = prepareWritableDirectory(
+            File(DownloadDirectoryUtils.normalizeDirectoryPath(downloadDirectory))
+        ) ?: return null
+        return prepareWritableDirectory(File(root, "abk-patched"))
+    }
+
+    private fun prepareWritableDirectory(directory: File): File? {
+        if (!directory.exists() && !directory.mkdirs()) return null
+        return directory.takeIf { it.isDirectory && it.canWrite() }
     }
 
     private fun buildBootPatchArgs(
