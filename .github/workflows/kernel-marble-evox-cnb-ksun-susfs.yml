@@ -106,7 +106,7 @@ jobs:
         run: |
           export PATH="$GITHUB_WORKSPACE/clang/$CLANG_REVISION/bin:$PATH"
           export CC="ccache clang"
-          make -j"$(nproc)" O=out LLVM=1 LLVM_IAS=1 TARGET_PRODUCT=marble Image modules_prepare
+          make -j2 O=out LLVM=1 LLVM_IAS=1 TARGET_PRODUCT=marble Image
           cp out/Module.symvers "$GITHUB_WORKSPACE/Module.symvers.baseline"
           cp out/.config "$GITHUB_WORKSPACE/config.baseline"
 
@@ -167,7 +167,7 @@ jobs:
         run: |
           export PATH="$GITHUB_WORKSPACE/clang/$CLANG_REVISION/bin:$PATH"
           export CC="ccache clang"
-          make -j"$(nproc)" O=out LLVM=1 LLVM_IAS=1 TARGET_PRODUCT=marble Image modules_prepare
+          make -j2 O=out LLVM=1 LLVM_IAS=1 TARGET_PRODUCT=marble Image
           cp out/.config "$GITHUB_WORKSPACE/config.ksu-susfs"
           cp out/Module.symvers "$GITHUB_WORKSPACE/Module.symvers.ksu-susfs"
 
