@@ -1,0 +1,211 @@
+name: Marble Evolution X CNB - KernelSU Next + SUSFS
+
+permissions:
+  contents: read
+
+on:
+  workflow_dispatch:
+
+env:
+  KERNEL_REPO: https://github.com/Evolution-X-Devices/kernel_xiaomi_sm8450.git
+  KERNEL_COMMIT: e8fcf25587112c854814dbe399a99110d18c82de
+  KERNEL_RELEASE: 5.10.256-gki-ge8fcf2558711
+  KSU_REPO: https://github.com/KernelSU-Next/KernelSU-Next.git
+  KSU_COMMIT: b5090144f696b385dbc451461b31971919f1485b
+  SUSFS_COMMIT: 95469ea00ef6d49f6f614700001cdc90328449dd
+  SUSFS_REBOOT_FIX: 530b69c8f84ce65178877e70b7a3f1128cf59b67
+  CLANG_REVISION: clang-r563880c
+  CLANG_COMMIT: 7f0f6b2368ece64291856c2b9dcb909f3c87a8d5
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - name: 检出 ABK
+        uses: actions/checkout@v6
+
+      - name: 释放空间并安装依赖
+        run: |
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc
+          sudo apt-get update
+          sudo apt-get install -y bc bison build-essential ccache flex git libelf-dev libssl-dev python3 rsync zip
+
+      - name: 检出 Evolution X 精确内核提交
+        run: |
+          git init kernel
+          cd kernel
+          git remote add origin "$KERNEL_REPO"
+          git fetch --depth=1 origin "$KERNEL_COMMIT"
+          git checkout --detach FETCH_HEAD
+          test "$(git rev-parse HEAD)" = "$KERNEL_COMMIT"
+
+      - name: 获取 Evolution X 指定 Clang
+        run: |
+          git init clang
+          cd clang
+          git remote add origin https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86
+          git sparse-checkout init --cone
+          git sparse-checkout set "$CLANG_REVISION"
+          git fetch --depth=1 origin "$CLANG_COMMIT"
+          git checkout --detach FETCH_HEAD
+          test "$(git rev-parse HEAD)" = "$CLANG_COMMIT"
+          test -x "$CLANG_REVISION/bin/clang"
+
+      - name: 配置 ccache
+        uses: hendrikmuhs/ccache-action@v1.2
+        with:
+          key: marble-evox-cnb-e8fcf255
+          max-size: 6G
+
+      - name: 生成 Evolution X 原版配置
+        working-directory: kernel
+        run: |
+          export PATH="$GITHUB_WORKSPACE/clang/$CLANG_REVISION/bin:$PATH"
+          export CC="ccache clang"
+          make O=out LLVM=1 LLVM_IAS=1 TARGET_PRODUCT=marble gki_defconfig
+          scripts/kconfig/merge_config.sh -m -O out out/.config \
+            arch/arm64/configs/vendor/waipio_GKI.config \
+            arch/arm64/configs/vendor/xiaomi_GKI.config \
+            arch/arm64/configs/vendor/marble_GKI.config \
+            arch/arm64/configs/vendor/debugfs.config
+          make O=out LLVM=1 LLVM_IAS=1 TARGET_PRODUCT=marble olddefconfig
+
+          release="$(make -s O=out LLVM=1 LLVM_IAS=1 TARGET_PRODUCT=marble kernelrelease)"
+          echo "原版 kernelrelease=$release"
+          test "$release" = "$KERNEL_RELEASE"
+
+      - name: 编译原版 ABI 基线
+        working-directory: kernel
+        run: |
+          export PATH="$GITHUB_WORKSPACE/clang/$CLANG_REVISION/bin:$PATH"
+          export CC="ccache clang"
+          make -j"$(nproc)" O=out LLVM=1 LLVM_IAS=1 TARGET_PRODUCT=marble Image modules_prepare
+          cp out/Module.symvers "$GITHUB_WORKSPACE/Module.symvers.baseline"
+          cp out/.config "$GITHUB_WORKSPACE/config.baseline"
+
+      - name: 加入 Evolution X 厂商 SUSFS 2.0 补丁
+        working-directory: kernel
+        run: |
+          curl -fL "https://github.com/Evolution-X-Devices/kernel_xiaomi_sm8450/commit/$SUSFS_COMMIT.patch" -o /tmp/susfs.patch
+          curl -fL "https://github.com/Evolution-X-Devices/kernel_xiaomi_sm8450/commit/$SUSFS_REBOOT_FIX.patch" -o /tmp/reboot-fix.patch
+          git apply --3way /tmp/susfs.patch
+          git apply --3way /tmp/reboot-fix.patch
+          rm -f fs/*.orig kernel/*.orig
+
+      - name: 加入 Evolution X 参考 KernelSU Next
+        working-directory: kernel
+        run: |
+          git clone --no-checkout "$KSU_REPO" KernelSU-Next
+          git -C KernelSU-Next checkout --detach "$KSU_COMMIT"
+          test "$(git -C KernelSU-Next rev-parse HEAD)" = "$KSU_COMMIT"
+
+          ln -s ../../KernelSU-Next/kernel drivers/kernelsu
+          sed -i '/source "drivers\/most\/Kconfig"/a source "drivers/kernelsu/Kconfig"' drivers/Kconfig
+          printf '\nobj-$(CONFIG_KSU) += kernelsu/\n' >> drivers/Makefile
+
+      - name: 配置 KernelSU 与 SUSFS 并固定原版 release
+        working-directory: kernel
+        run: |
+          scripts/config --file out/.config --set-str LOCALVERSION "-gki-ge8fcf2558711"
+          scripts/config --file out/.config -d LOCALVERSION_AUTO
+          scripts/config --file out/.config -e KSU
+          scripts/config --file out/.config -e KSU_KPROBES_HOOK
+          scripts/config --file out/.config -e KSU_SUSFS
+          scripts/config --file out/.config -e KSU_SUSFS_HAS_MAGIC_MOUNT
+          scripts/config --file out/.config -e KSU_SUSFS_SUS_PATH
+          scripts/config --file out/.config -e KSU_SUSFS_SUS_MOUNT
+          scripts/config --file out/.config -e KSU_SUSFS_AUTO_ADD_SUS_KSU_DEFAULT_MOUNT
+          scripts/config --file out/.config -e KSU_SUSFS_AUTO_ADD_SUS_BIND_MOUNT
+          scripts/config --file out/.config -e KSU_SUSFS_SUS_KSTAT
+          scripts/config --file out/.config -d KSU_SUSFS_SUS_OVERLAYFS
+          scripts/config --file out/.config -e KSU_SUSFS_TRY_UMOUNT
+          scripts/config --file out/.config -e KSU_SUSFS_AUTO_ADD_TRY_UMOUNT_FOR_BIND_MOUNT
+          scripts/config --file out/.config -e KSU_SUSFS_SPOOF_UNAME
+          scripts/config --file out/.config -e KSU_SUSFS_ENABLE_LOG
+          scripts/config --file out/.config -e KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS
+          scripts/config --file out/.config -e KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG
+          scripts/config --file out/.config -e KSU_SUSFS_OPEN_REDIRECT
+          scripts/config --file out/.config -e KSU_SUSFS_SUS_SU
+
+          export PATH="$GITHUB_WORKSPACE/clang/$CLANG_REVISION/bin:$PATH"
+          make O=out LLVM=1 LLVM_IAS=1 TARGET_PRODUCT=marble olddefconfig
+          release="$(make -s O=out LLVM=1 LLVM_IAS=1 TARGET_PRODUCT=marble kernelrelease)"
+          echo "专用内核 kernelrelease=$release"
+          test "$release" = "$KERNEL_RELEASE"
+
+      - name: 编译专用 KernelSU + SUSFS 内核
+        working-directory: kernel
+        run: |
+          export PATH="$GITHUB_WORKSPACE/clang/$CLANG_REVISION/bin:$PATH"
+          export CC="ccache clang"
+          make -j"$(nproc)" O=out LLVM=1 LLVM_IAS=1 TARGET_PRODUCT=marble Image modules_prepare
+          cp out/.config "$GITHUB_WORKSPACE/config.ksu-susfs"
+          cp out/Module.symvers "$GITHUB_WORKSPACE/Module.symvers.ksu-susfs"
+
+      - name: 校验原有模块 ABI 与关键配置
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          def read_symbols(path):
+              result = {}
+              for line in Path(path).read_text().splitlines():
+                  fields = line.split()
+                  if len(fields) >= 2:
+                      result[fields[1]] = fields[0]
+              return result
+
+          baseline = read_symbols("Module.symvers.baseline")
+          patched = read_symbols("Module.symvers.ksu-susfs")
+          missing = sorted(set(baseline) - set(patched))
+          changed = sorted(name for name in baseline.keys() & patched if baseline[name] != patched[name])
+          Path("abi-report.txt").write_text(
+              f"baseline={len(baseline)}\npatched={len(patched)}\n"
+              f"missing={len(missing)}\nchanged={len(changed)}\n"
+              + "\n".join([*(f"MISSING {x}" for x in missing), *(f"CHANGED {x}" for x in changed)])
+              + "\n"
+          )
+          if missing or changed:
+              raise SystemExit(f"原有模块 ABI 发生变化: missing={len(missing)}, changed={len(changed)}")
+
+          config = set(Path("config.ksu-susfs").read_text().splitlines())
+          required = {
+              'CONFIG_MODVERSIONS=y', 'CONFIG_KSU=y', 'CONFIG_KSU_SUSFS=y',
+              'CONFIG_KSU_SUSFS_SUS_PATH=y', 'CONFIG_KSU_SUSFS_SUS_MOUNT=y',
+              'CONFIG_KSU_SUSFS_SUS_KSTAT=y', 'CONFIG_KSU_SUSFS_SPOOF_UNAME=y',
+              'CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS=y',
+          }
+          absent = sorted(required - config)
+          if absent:
+              raise SystemExit(f"缺少关键配置: {absent}")
+          PY
+
+          strings kernel/out/arch/arm64/boot/Image | grep -F "Linux version $KERNEL_RELEASE"
+
+      - name: 制作仅适用于 marble Evolution X CNB 的 AK3
+        run: |
+          git clone --depth=1 --branch gki-2.0 https://github.com/WildKernels/AnyKernel3.git ak3
+          rm -rf ak3/.git
+          cp kernel/out/arch/arm64/boot/Image ak3/Image
+          sed -i 's/do.devicecheck=0/do.devicecheck=1/' ak3/anykernel.sh
+          sed -i 's/device.name1=/device.name1=marble/' ak3/anykernel.sh
+          sed -i 's/device.name2=/device.name2=marblein/' ak3/anykernel.sh
+          sed -i 's/supported.versions=/supported.versions=17/' ak3/anykernel.sh
+          cd ak3
+          zip -r9 ../marble-EvolutionX-CNB-5.10.256-KSUN-SUSFS-AK3.zip . -x '*.git*'
+
+      - name: 上传专用测试产物
+        uses: actions/upload-artifact@v6
+        with:
+          name: marble-EvolutionX-CNB-5.10.256-KSUN-SUSFS
+          if-no-files-found: error
+          retention-days: 30
+          path: |
+            marble-EvolutionX-CNB-5.10.256-KSUN-SUSFS-AK3.zip
+            kernel/out/arch/arm64/boot/Image
+            config.baseline
+            config.ksu-susfs
+            Module.symvers.baseline
+            Module.symvers.ksu-susfs
+            abi-report.txt
