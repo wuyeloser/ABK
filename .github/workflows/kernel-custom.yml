@@ -185,6 +185,8 @@ jobs:
       sub_level: ${{ inputs.sub_level }}
       os_patch_level: ${{ inputs.os_patch_level }}
       revision: ${{ inputs.revision || '' }}
+      kernel_source_ref: ${{ inputs.android_version == 'android12' && inputs.kernel_version == '5.10' && inputs.sub_level == '256' && inputs.os_patch_level == '2026-07' && 'a724b19517054466fee056fa48f589423d5bd306' || '' }}
+      susfs_source_ref: ${{ inputs.android_version == 'android12' && inputs.kernel_version == '5.10' && inputs.sub_level == '256' && inputs.os_patch_level == '2026-07' && '3c14ad549f826b1f53878ec8c12253efebeed75a' || '' }}
       ksu_variant: ${{ inputs.kernelsu_variant }}
       ksu_branch: ${{ inputs.kernelsu_branch }}
       custom_ref: ${{ inputs.custom_ref || '' }}
