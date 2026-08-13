@@ -94,6 +94,7 @@ jobs:
           scripts/config --file out/.config -e LOCALVERSION_AUTO
           make O=out LLVM=1 LLVM_IAS=1 TARGET_PRODUCT=marble olddefconfig
           grep -Fx 'CONFIG_LOCALVERSION="-gki"' out/.config
+          make O=out LLVM=1 LLVM_IAS=1 TARGET_PRODUCT=marble syncconfig
           rm -f out/include/config/kernel.release out/include/generated/utsrelease.h
 
           release="$(make -s O=out LLVM=1 LLVM_IAS=1 TARGET_PRODUCT=marble kernelrelease)"
@@ -155,6 +156,7 @@ jobs:
 
           export PATH="$GITHUB_WORKSPACE/clang/$CLANG_REVISION/bin:$PATH"
           make O=out LLVM=1 LLVM_IAS=1 TARGET_PRODUCT=marble olddefconfig
+          make O=out LLVM=1 LLVM_IAS=1 TARGET_PRODUCT=marble syncconfig
           rm -f out/include/config/kernel.release out/include/generated/utsrelease.h
           release="$(make -s O=out LLVM=1 LLVM_IAS=1 TARGET_PRODUCT=marble kernelrelease)"
           echo "专用内核 kernelrelease=$release"
