@@ -9,7 +9,7 @@ on:
 
 jobs:
   build-marble-evox-a17:
-    name: marble-evox-a17-5.10.256-official-susfs-zram
+    name: marble-evox-a17-5.10.256-android12-9-official-susfs
     uses: ./.github/workflows/build.yml
     secrets: inherit
     with:
@@ -24,12 +24,14 @@ jobs:
       ksu_variant: Official
       ksu_branch: Custom(自定义)
       custom_ref: e6832ed548ada2fa16fcbd6c8e98bbd1868f4401
-      version: marble-evox-a17-5.10.256-ksu-official-susfs-zram
+      # Keep the upstream GKI release string intact. Vendor modules on marble
+      # expect the android12-9 KMI generation marker.
+      version: ""
       build_time: "N"
 
       enable_susfs: true
-      use_zram: true
-      zram_full_algo: true
+      use_zram: false
+      zram_full_algo: false
       zram_extra_algos: ""
 
       use_bbg: false
