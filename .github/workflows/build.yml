@@ -1021,7 +1021,12 @@ jobs:
             exit 1
           fi
 
-          git fetch --no-tags --depth=1 origin "$KERNEL_SOURCE_REF"
+          # repo(1) checkouts may not define an `origin` remote. Fetch the
+          # bounded Android 12 LTS history directly so the pinned 5.10.256
+          # merge commit is available without relying on local remote names.
+          git fetch --no-tags --depth=160 \
+            https://android.googlesource.com/kernel/common \
+            android12-5.10-lts
           git checkout --detach "$KERNEL_SOURCE_REF"
 
           actual_sha="$(git rev-parse HEAD)"
