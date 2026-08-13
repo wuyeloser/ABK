@@ -5839,7 +5839,7 @@ jobs:
             exit 1
           fi
 
-          RELEASE="$(strings "$IMAGE" | sed -n 's/^Linux version \([^ ]*\).*/\1/p' | head -n 1)"
+          RELEASE="$(strings "$IMAGE" | sed -n '/^Linux version 5\.10\.256-/ { s/^Linux version \([^ ]*\).*/\1/p; q; }')"
           echo "检测到内核 release：$RELEASE"
           if [[ ! "$RELEASE" =~ ^5\.10\.256-android12-9-g[0-9a-f]+ ]]; then
             echo "::error::KMI 标识不匹配：期望 5.10.256-android12-9-g<hash>，实际为 $RELEASE"
