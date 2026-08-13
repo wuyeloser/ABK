@@ -45,9 +45,11 @@ jobs:
           git init clang
           cd clang
           git remote add origin https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86
+          git config remote.origin.promisor true
+          git config remote.origin.partialclonefilter blob:none
           git sparse-checkout init --cone
           git sparse-checkout set "$CLANG_REVISION"
-          git fetch --depth=1 origin "$CLANG_COMMIT"
+          git fetch --depth=1 --filter=blob:none origin "$CLANG_COMMIT"
           git checkout --detach FETCH_HEAD
           test "$(git rev-parse HEAD)" = "$CLANG_COMMIT"
           test -x "$CLANG_REVISION/bin/clang"
