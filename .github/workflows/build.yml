@@ -33,6 +33,14 @@ on:
       custom_ref:
         required: false
         type: string
+      kernel_source_ref:
+        description: "Optional exact kernel/common commit SHA to check out after manifest sync"
+        required: false
+        type: string
+      susfs_source_ref:
+        description: "Optional exact SUSFS commit SHA for reproducible builds"
+        required: false
+        type: string
       version:
         required: false
         type: string
@@ -294,6 +302,7 @@ jobs:
           android12 5.10 237 2025-06
           android12 5.10 240 2025-09
           android12 5.10 246 2025-12
+          android12 5.10 256 2026-07
           android13 5.15 41 2022-06
           android13 5.15 41 2022-07
           android13 5.15 41 2022-08
@@ -626,10 +635,31 @@ jobs:
             echo "克隆 SUSFS (分支: $SUSFS_BRANCH)..."
             retry_git_clone https://gitlab.com/simonpunk/susfs4ksu.git "$SUSFS_BRANCH" susfs4ksu
 
+            SUSFS_SOURCE_REF="${{ inputs.susfs_source_ref }}"
+            if [ -n "$SUSFS_SOURCE_REF" ]; then
+              if ! [[ "$SUSFS_SOURCE_REF" =~ ^[0-9a-fA-F]{40}$ ]]; then
+                echo "::error::susfs_source_ref 必须是 40 位完整提交 SHA：$SUSFS_SOURCE_REF"
+                exit 1
+              fi
+              git -C susfs4ksu fetch --no-tags --depth=1 origin "$SUSFS_SOURCE_REF"
+              git -C susfs4ksu checkout --detach "$SUSFS_SOURCE_REF"
+              ACTUAL_SUSFS_SHA="$(git -C susfs4ksu rev-parse HEAD)"
+              if [ "$ACTUAL_SUSFS_SHA" != "${SUSFS_SOURCE_REF,,}" ]; then
+                echo "::error::SUSFS 提交校验失败：expected=$SUSFS_SOURCE_REF actual=$ACTUAL_SUSFS_SHA"
+                exit 1
+              fi
+              {
+                echo "### Pinned SUSFS source"
+                echo
+                echo "- Commit: \`$ACTUAL_SUSFS_SHA\`"
+                echo "- Branch family: \`$SUSFS_BRANCH\`"
+              } >> "$GITHUB_STEP_SUMMARY"
+            fi
+
             CONFIG_FILE="config/config"
             if [ -f "$CONFIG_FILE" ]; then
               CUSTOM_ENABLED=$(grep "^custom=" "$CONFIG_FILE" | cut -d'=' -f2)
-              if [ "$CUSTOM_ENABLED" == "true" ]; then
+              if [ -z "$SUSFS_SOURCE_REF" ] && [ "$CUSTOM_ENABLED" == "true" ]; then
                 CUSTOM_COMMIT=$(grep "^${SUSFS_BRANCH}=" "$CONFIG_FILE" | cut -d'=' -f2)
                 if [ -n "$CUSTOM_COMMIT" ]; then
                   echo "切换 SUSFS 到自定义提交: $CUSTOM_COMMIT"
@@ -977,6 +1007,48 @@ jobs:
 
           $REPO --trace sync -c -j$(nproc --all) --no-tags --fail-fast
           echo "REMOTE_BRANCH=$REMOTE_BRANCH" >> $GITHUB_ENV
+
+      - name: 固定 kernel/common 精确提交
+        if: inputs.kernel_source_ref != ''
+        working-directory: ${{ env.KERNEL_ROOT }}/common
+        env:
+          KERNEL_SOURCE_REF: ${{ inputs.kernel_source_ref }}
+        run: |
+          set -euo pipefail
+
+          if ! [[ "$KERNEL_SOURCE_REF" =~ ^[0-9a-fA-F]{40}$ ]]; then
+            echo "::error::kernel_source_ref 必须是 40 位完整提交 SHA：$KERNEL_SOURCE_REF"
+            exit 1
+          fi
+
+          git fetch --no-tags --depth=1 origin "$KERNEL_SOURCE_REF"
+          git checkout --detach "$KERNEL_SOURCE_REF"
+
+          actual_sha="$(git rev-parse HEAD)"
+          if [ "$actual_sha" != "${KERNEL_SOURCE_REF,,}" ]; then
+            echo "::error::kernel/common 提交校验失败：expected=$KERNEL_SOURCE_REF actual=$actual_sha"
+            exit 1
+          fi
+
+          actual_version="$(awk '
+            /^VERSION = / { version=$3 }
+            /^PATCHLEVEL = / { patchlevel=$3 }
+            /^SUBLEVEL = / { sublevel=$3 }
+            END { print version "." patchlevel "." sublevel }
+          ' Makefile)"
+          expected_version="${{ inputs.kernel_version }}.${{ inputs.sub_level }}"
+          if [ "$actual_version" != "$expected_version" ]; then
+            echo "::error::kernel/common 版本不匹配：expected=$expected_version actual=$actual_version"
+            exit 1
+          fi
+
+          {
+            echo "### Pinned kernel/common source"
+            echo
+            echo "- Commit: \`$actual_sha\`"
+            echo "- Version: \`$actual_version\`"
+            echo "- Subject: \`$(git log -1 --format=%s)\`"
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: 应用 Stock Config 伪装
         run: |
