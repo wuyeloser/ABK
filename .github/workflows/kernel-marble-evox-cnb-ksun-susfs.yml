@@ -43,7 +43,7 @@ jobs:
 
       - name: 获取 Evolution X 指定 Clang
         id: clang
-        uses: actions/cache@v4
+        uses: actions/cache/restore@v4
         with:
           path: clang/${{ env.CLANG_REVISION }}
           key: clang-linux-x86-${{ env.CLANG_REVISION }}-${{ env.CLANG_COMMIT }}
@@ -65,6 +65,13 @@ jobs:
           test "$(git rev-parse HEAD)" = "$CLANG_COMMIT"
           test -x "$CLANG_REVISION/bin/clang"
 
+      - name: 保存 Evolution X 指定 Clang
+        if: steps.clang.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: clang/${{ env.CLANG_REVISION }}
+          key: ${{ steps.clang.outputs.cache-primary-key }}
+
       - name: 配置 ccache
         uses: hendrikmuhs/ccache-action@v1.2
         with:
@@ -83,6 +90,10 @@ jobs:
             arch/arm64/configs/vendor/marble_GKI.config \
             arch/arm64/configs/vendor/debugfs.config
           make O=out LLVM=1 LLVM_IAS=1 TARGET_PRODUCT=marble olddefconfig
+          scripts/config --file out/.config --set-str LOCALVERSION "-gki"
+          scripts/config --file out/.config -e LOCALVERSION_AUTO
+          make O=out LLVM=1 LLVM_IAS=1 TARGET_PRODUCT=marble olddefconfig
+          grep -Fx 'CONFIG_LOCALVERSION="-gki"' out/.config
 
           release="$(make -s O=out LLVM=1 LLVM_IAS=1 TARGET_PRODUCT=marble kernelrelease)"
           echo "原版 kernelrelease=$release"
