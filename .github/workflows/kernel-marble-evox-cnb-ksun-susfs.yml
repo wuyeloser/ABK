@@ -7,6 +7,7 @@ on:
   workflow_dispatch:
 
 env:
+  ARCH: arm64
   KERNEL_REPO: https://github.com/Evolution-X-Devices/kernel_xiaomi_sm8450.git
   KERNEL_COMMIT: e8fcf25587112c854814dbe399a99110d18c82de
   KERNEL_RELEASE: 5.10.256-gki-ge8fcf2558711
@@ -41,7 +42,17 @@ jobs:
           test "$(git rev-parse HEAD)" = "$KERNEL_COMMIT"
 
       - name: 获取 Evolution X 指定 Clang
+        id: clang
+        uses: actions/cache@v4
+        with:
+          path: clang/${{ env.CLANG_REVISION }}
+          key: clang-linux-x86-${{ env.CLANG_REVISION }}-${{ env.CLANG_COMMIT }}
+
+      - name: 下载 Evolution X 指定 Clang
         run: |
+          if test -x "clang/$CLANG_REVISION/bin/clang"; then
+            exit 0
+          fi
           git init clang
           cd clang
           git remote add origin https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86
