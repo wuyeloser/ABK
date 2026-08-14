@@ -188,6 +188,8 @@ jobs:
           cp out/vmlinux.symvers "$GITHUB_WORKSPACE/Module.symvers.ksu-susfs"
 
       - name: 校验原有模块 ABI 与关键配置
+        id: validation
+        continue-on-error: true
         run: |
           python3 - <<'PY'
           from pathlib import Path
@@ -219,7 +221,7 @@ jobs:
           )
           baseline_declared_missing = sorted(declared - set(baseline))
           added = sorted(set(patched) - set(baseline))
-          Path("abi-report.txt").write_text(
+          report = (
               f"declared={len(declared)}\nbaseline={len(baseline)}\npatched={len(patched)}\n"
               f"baseline_declared_missing={len(baseline_declared_missing)}\n"
               f"missing={len(missing)}\ncrc_mismatch={len(crc_mismatch)}\nadded={len(added)}\n"
@@ -234,6 +236,8 @@ jobs:
               + "\n".join(f"ADDED {x}" for x in added)
               + "\n"
           )
+          Path("abi-report.txt").write_text(report)
+          print(report)
           if missing or crc_mismatch:
               raise SystemExit(
                   f"原版 ABI 不兼容: missing={len(missing)}, crc_mismatch={len(crc_mismatch)}"
@@ -266,6 +270,7 @@ jobs:
           zip -r9 ../marble-EvolutionX-CNB-5.10.256-KSUN-SUSFS-AK3.zip . -x '*.git*'
 
       - name: 上传专用测试产物
+        if: always()
         uses: actions/upload-artifact@v6
         with:
           name: marble-EvolutionX-CNB-5.10.256-KSUN-SUSFS
@@ -280,3 +285,7 @@ jobs:
             abi_gki_aarch64_xiaomi.baseline
             Module.symvers.ksu-susfs
             abi-report.txt
+
+      - name: ABI 与配置校验门禁
+        if: always()
+        run: test "${{ steps.validation.outcome }}" = "success"
