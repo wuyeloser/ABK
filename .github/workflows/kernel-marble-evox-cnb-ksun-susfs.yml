@@ -113,6 +113,14 @@ jobs:
           cp android/abi_gki_aarch64 "$GITHUB_WORKSPACE/abi_gki_aarch64.baseline"
           cp android/abi_gki_aarch64_xiaomi "$GITHUB_WORKSPACE/abi_gki_aarch64_xiaomi.baseline"
 
+      - name: 编译 Evolution X 原版 ABI 基线
+        working-directory: kernel
+        run: |
+          export PATH="$GITHUB_WORKSPACE/clang/$CLANG_REVISION/bin:$PATH"
+          export CC="ccache clang"
+          make -j3 O=out LLVM=1 LLVM_IAS=1 TARGET_PRODUCT=marble Image
+          cp out/vmlinux.symvers "$GITHUB_WORKSPACE/vmlinux.symvers.baseline"
+
       - name: 加入 Evolution X 厂商 SUSFS 2.0 补丁
         working-directory: kernel
         run: |
@@ -201,17 +209,35 @@ jobs:
                           result.add(line)
               return result
 
-          baseline = read_abi_lists("abi_gki_aarch64.baseline", "abi_gki_aarch64_xiaomi.baseline")
+          declared = read_abi_lists("abi_gki_aarch64.baseline", "abi_gki_aarch64_xiaomi.baseline")
+          baseline = read_symvers("vmlinux.symvers.baseline")
           patched = read_symvers("Module.symvers.ksu-susfs")
-          missing = sorted(baseline - set(patched))
+          missing = sorted(set(baseline) - set(patched))
+          crc_mismatch = sorted(
+              symbol for symbol in baseline.keys() & patched.keys()
+              if baseline[symbol] != patched[symbol]
+          )
+          baseline_declared_missing = sorted(declared - set(baseline))
+          added = sorted(set(patched) - set(baseline))
           Path("abi-report.txt").write_text(
-              f"baseline={len(baseline)}\npatched={len(patched)}\n"
-              f"missing={len(missing)}\n"
+              f"declared={len(declared)}\nbaseline={len(baseline)}\npatched={len(patched)}\n"
+              f"baseline_declared_missing={len(baseline_declared_missing)}\n"
+              f"missing={len(missing)}\ncrc_mismatch={len(crc_mismatch)}\nadded={len(added)}\n"
+              + "\n".join(f"BASELINE_DECLARED_MISSING {x}" for x in baseline_declared_missing)
+              + "\n"
               + "\n".join(f"MISSING {x}" for x in missing)
               + "\n"
+              + "\n".join(
+                  f"CRC_MISMATCH {x} {baseline[x]} {patched[x]}" for x in crc_mismatch
+              )
+              + "\n"
+              + "\n".join(f"ADDED {x}" for x in added)
+              + "\n"
           )
-          if missing:
-              raise SystemExit(f"原版 GKI/Xiaomi ABI 符号缺失: missing={len(missing)}")
+          if missing or crc_mismatch:
+              raise SystemExit(
+                  f"原版 ABI 不兼容: missing={len(missing)}, crc_mismatch={len(crc_mismatch)}"
+              )
 
           config = set(Path("config.ksu-susfs").read_text().splitlines())
           required = {
