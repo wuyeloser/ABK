@@ -126,7 +126,8 @@ jobs:
           git -C KernelSU-Next checkout --detach FETCH_HEAD
           test "$(git -C KernelSU-Next rev-parse HEAD)" = "$KSU_COMMIT"
 
-          ln -s ../../KernelSU-Next/kernel drivers/kernelsu
+          ln -s ../KernelSU-Next/kernel drivers/kernelsu
+          test -f drivers/kernelsu/Kconfig
           sed -i '/source "drivers\/most\/Kconfig"/a source "drivers/kernelsu/Kconfig"' drivers/Kconfig
           printf '\nobj-$(CONFIG_KSU) += kernelsu/\n' >> drivers/Makefile
 
