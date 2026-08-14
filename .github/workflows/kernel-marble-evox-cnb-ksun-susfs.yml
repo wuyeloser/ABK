@@ -130,6 +130,23 @@ jobs:
           git apply --3way /tmp/reboot-fix.patch
           rm -f fs/*.orig kernel/*.orig
 
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path("fs/statfs.c")
+          source = path.read_text()
+          old = '#include <linux/susfs_def.h>\n#include "mount.h"'
+          new = (
+              '#include <linux/susfs_def.h>\n'
+              '#ifndef __GENKSYMS__\n'
+              '#include "mount.h"\n'
+              '#endif'
+          )
+          if source.count(old) != 1:
+              raise SystemExit("无法唯一定位 statfs.c 的 SUSFS mount.h 引用")
+          path.write_text(source.replace(old, new))
+          PY
+
       - name: 加入 Evolution X 参考 KernelSU Next
         working-directory: kernel
         run: |
