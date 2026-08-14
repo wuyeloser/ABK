@@ -120,8 +120,10 @@ jobs:
       - name: 加入 Evolution X 参考 KernelSU Next
         working-directory: kernel
         run: |
-          git clone --no-checkout "$KSU_REPO" KernelSU-Next
-          git -C KernelSU-Next checkout --detach "$KSU_COMMIT"
+          git init KernelSU-Next
+          git -C KernelSU-Next remote add origin "$KSU_REPO"
+          git -C KernelSU-Next fetch --depth=1 origin "$KSU_COMMIT"
+          git -C KernelSU-Next checkout --detach FETCH_HEAD
           test "$(git -C KernelSU-Next rev-parse HEAD)" = "$KSU_COMMIT"
 
           ln -s ../../KernelSU-Next/kernel drivers/kernelsu
