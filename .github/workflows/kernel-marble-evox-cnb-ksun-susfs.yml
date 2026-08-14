@@ -156,6 +156,7 @@ jobs:
           scripts/config --file out/.config -e KSU_SUSFS_SUS_SU
 
           export PATH="$GITHUB_WORKSPACE/clang/$CLANG_REVISION/bin:$PATH"
+          export LOCALVERSION=
           make O=out LLVM=1 LLVM_IAS=1 TARGET_PRODUCT=marble olddefconfig
           make O=out LLVM=1 LLVM_IAS=1 TARGET_PRODUCT=marble syncconfig
           rm -f out/include/config/kernel.release out/include/generated/utsrelease.h
@@ -167,6 +168,7 @@ jobs:
         working-directory: kernel
         run: |
           export PATH="$GITHUB_WORKSPACE/clang/$CLANG_REVISION/bin:$PATH"
+          export LOCALVERSION=
           export CC="ccache clang"
           make -j3 O=out LLVM=1 LLVM_IAS=1 TARGET_PRODUCT=marble Image
           cp out/.config "$GITHUB_WORKSPACE/config.ksu-susfs"
