@@ -192,6 +192,36 @@ jobs:
                   raise SystemExit(f"Official KSU 3.2.5 sucompat adaptation did not match exactly: {old}")
               source = source.replace(old, new)
           path.write_text(source)
+
+          # The Evolution X SUSFS 2.0 kernel patch predates the SUSFS string
+          # helpers used by this matching KernelSU integration patch. Keep the
+          # check local to KernelSU so no global kernel ABI is introduced.
+          path = Path("KernelSU/kernel/feature/adb_root.c")
+          source = path.read_text()
+          old = '''static inline long is_exec_adbd(const char *filename)
+          {
+              if (strstr(filename, "adbd"))
+                  pr_info("is_exec_adbd() => filename: %s\\n", filename);
+
+              return (susfs_starts_with(filename, "/apex/") &&
+                          susfs_ends_with(filename, "/adbd"));
+          }'''
+          new = '''static inline long is_exec_adbd(const char *filename)
+          {
+              static const char prefix[] = "/apex/";
+              static const char suffix[] = "/adbd";
+              size_t filename_len = strlen(filename);
+
+              if (strstr(filename, "adbd"))
+                  pr_info("is_exec_adbd() => filename: %s\\n", filename);
+
+              return filename_len >= sizeof(suffix) - 1 &&
+                     !strncmp(filename, prefix, sizeof(prefix) - 1) &&
+                     !strcmp(filename + filename_len - (sizeof(suffix) - 1), suffix);
+          }'''
+          if source.count(old) != 1:
+              raise SystemExit("Official KSU 3.2.5 adb_root SUSFS compatibility block did not match exactly")
+          path.write_text(source.replace(old, new))
           PY
 
           test "$(git -C KernelSU rev-parse HEAD)" = "$KSU_COMMIT"
