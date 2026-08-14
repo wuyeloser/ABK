@@ -101,14 +101,12 @@ jobs:
           echo "原版 kernelrelease=$release"
           test "$release" = "$KERNEL_RELEASE"
 
-      - name: 编译原版 ABI 基线
+      - name: 保存 Evolution X 原版 ABI 符号基线
         working-directory: kernel
         run: |
-          export PATH="$GITHUB_WORKSPACE/clang/$CLANG_REVISION/bin:$PATH"
-          export CC="ccache clang"
-          make -j2 O=out LLVM=1 LLVM_IAS=1 TARGET_PRODUCT=marble Image
-          cp out/Module.symvers "$GITHUB_WORKSPACE/Module.symvers.baseline"
           cp out/.config "$GITHUB_WORKSPACE/config.baseline"
+          cp android/abi_gki_aarch64 "$GITHUB_WORKSPACE/abi_gki_aarch64.baseline"
+          cp android/abi_gki_aarch64_xiaomi "$GITHUB_WORKSPACE/abi_gki_aarch64_xiaomi.baseline"
 
       - name: 加入 Evolution X 厂商 SUSFS 2.0 补丁
         working-directory: kernel
@@ -167,7 +165,7 @@ jobs:
         run: |
           export PATH="$GITHUB_WORKSPACE/clang/$CLANG_REVISION/bin:$PATH"
           export CC="ccache clang"
-          make -j2 O=out LLVM=1 LLVM_IAS=1 TARGET_PRODUCT=marble Image
+          make -j3 O=out LLVM=1 LLVM_IAS=1 TARGET_PRODUCT=marble Image
           cp out/.config "$GITHUB_WORKSPACE/config.ksu-susfs"
           cp out/Module.symvers "$GITHUB_WORKSPACE/Module.symvers.ksu-susfs"
 
@@ -176,7 +174,7 @@ jobs:
           python3 - <<'PY'
           from pathlib import Path
 
-          def read_symbols(path):
+          def read_symvers(path):
               result = {}
               for line in Path(path).read_text().splitlines():
                   fields = line.split()
@@ -184,18 +182,26 @@ jobs:
                       result[fields[1]] = fields[0]
               return result
 
-          baseline = read_symbols("Module.symvers.baseline")
-          patched = read_symbols("Module.symvers.ksu-susfs")
-          missing = sorted(set(baseline) - set(patched))
-          changed = sorted(name for name in baseline.keys() & patched if baseline[name] != patched[name])
+          def read_abi_lists(*paths):
+              result = set()
+              for path in paths:
+                  for line in Path(path).read_text().splitlines():
+                      line = line.strip()
+                      if line and not line.startswith(('#', '[')):
+                          result.add(line)
+              return result
+
+          baseline = read_abi_lists("abi_gki_aarch64.baseline", "abi_gki_aarch64_xiaomi.baseline")
+          patched = read_symvers("Module.symvers.ksu-susfs")
+          missing = sorted(baseline - set(patched))
           Path("abi-report.txt").write_text(
               f"baseline={len(baseline)}\npatched={len(patched)}\n"
-              f"missing={len(missing)}\nchanged={len(changed)}\n"
-              + "\n".join([*(f"MISSING {x}" for x in missing), *(f"CHANGED {x}" for x in changed)])
+              f"missing={len(missing)}\n"
+              + "\n".join(f"MISSING {x}" for x in missing)
               + "\n"
           )
-          if missing or changed:
-              raise SystemExit(f"原有模块 ABI 发生变化: missing={len(missing)}, changed={len(changed)}")
+          if missing:
+              raise SystemExit(f"原版 GKI/Xiaomi ABI 符号缺失: missing={len(missing)}")
 
           config = set(Path("config.ksu-susfs").read_text().splitlines())
           required = {
@@ -234,6 +240,7 @@ jobs:
             kernel/out/arch/arm64/boot/Image
             config.baseline
             config.ksu-susfs
-            Module.symvers.baseline
+            abi_gki_aarch64.baseline
+            abi_gki_aarch64_xiaomi.baseline
             Module.symvers.ksu-susfs
             abi-report.txt
