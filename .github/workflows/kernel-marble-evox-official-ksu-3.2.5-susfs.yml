@@ -230,6 +230,16 @@ jobs:
                   raise SystemExit(f"Evolution SUSFS hook adaptation did not match exactly: {label}")
               path.write_text(source.replace(old, new))
 
+          def replace_count(pathname, old, new, expected, label):
+              path = Path(pathname)
+              source = path.read_text()
+              if source.count(old) != expected:
+                  raise SystemExit(
+                      f"Evolution SUSFS hook adaptation count mismatch: {label}; "
+                      f"expected={expected}, actual={source.count(old)}"
+                  )
+              path.write_text(source.replace(old, new))
+
           # Evolution's SUSFS commit still uses the legacy KSU boolean hook
           # names. Official KSU 3.2.5 + its matching SUSFS patch exposes
           # static keys instead. Adapt only those integration call sites.
@@ -288,6 +298,67 @@ jobs:
           replace_exact("fs/exec.c", old, new, "exec hook body")
 
           replace_exact(
+              "fs/stat.c",
+              "extern bool ksu_init_rc_hook __read_mostly;",
+              "extern struct static_key_true ksu_is_init_rc_hook_enabled;",
+              "fstat hook declaration",
+          )
+          replace_exact(
+              "fs/stat.c",
+              "if (unlikely(ksu_init_rc_hook)) {\n\t\tksu_handle_vfs_fstat(fd, &stat->size);\n\t}",
+              "if (static_branch_unlikely(&ksu_is_init_rc_hook_enabled))\n"
+              "\t\tksu_handle_vfs_fstat(fd, &stat->size);",
+              "fstat hook condition",
+          )
+          replace_exact(
+              "fs/stat.c",
+              "extern bool ksu_su_compat_enabled __read_mostly;",
+              "extern struct static_key_true ksu_su_compat_enabled;",
+              "stat sucompat declaration",
+          )
+          old = (
+              "if (likely(susfs_is_current_proc_umounted()) || !ksu_su_compat_enabled) {\n"
+              "\t\tgoto orig_flow;\n"
+              "\t}\n\n"
+              "\tif (unlikely(__ksu_is_allow_uid_for_current(current_uid().val))) {\n"
+              "\t\tksu_handle_stat(&dfd, &filename, &flags);\n"
+              "\t}"
+          )
+          new = (
+              "if (likely(susfs_is_current_proc_umounted()))\n"
+              "\t\tgoto orig_flow;\n\n"
+              "\tif (static_branch_likely(&ksu_su_compat_enabled)) {\n"
+              "\t\tif (unlikely(__ksu_is_allow_uid_for_current(current_uid().val)))\n"
+              "\t\t\tksu_handle_stat(&dfd, &filename, &flags);\n"
+              "\t}"
+          )
+          replace_exact("fs/stat.c", old, new, "stat sucompat hook body")
+
+          replace_exact(
+              "fs/open.c",
+              "extern bool ksu_su_compat_enabled __read_mostly;",
+              "extern struct static_key_true ksu_su_compat_enabled;",
+              "faccessat sucompat declaration",
+          )
+          old = (
+              "if (likely(susfs_is_current_proc_umounted()) || !ksu_su_compat_enabled) {\n"
+              "\t\tgoto orig_flow;\n"
+              "\t}\n\n"
+              "\tif (unlikely(__ksu_is_allow_uid_for_current(current_uid().val))) {\n"
+              "\t\tksu_handle_faccessat(&dfd, &filename, &mode, NULL);\n"
+              "\t}"
+          )
+          new = (
+              "if (likely(susfs_is_current_proc_umounted()))\n"
+              "\t\tgoto orig_flow;\n\n"
+              "\tif (static_branch_likely(&ksu_su_compat_enabled)) {\n"
+              "\t\tif (unlikely(__ksu_is_allow_uid_for_current(current_uid().val)))\n"
+              "\t\t\tksu_handle_faccessat(&dfd, &filename, &mode, NULL);\n"
+              "\t}"
+          )
+          replace_exact("fs/open.c", old, new, "faccessat sucompat hook body")
+
+          replace_exact(
               "fs/devpts/inode.c",
               "#ifdef CONFIG_KSU_SUSFS\nextern int ksu_handle_devpts(struct inode*);\n#endif\n\n",
               "",
@@ -314,8 +385,50 @@ jobs:
           replace_exact(
               "fs/susfs.c",
               "#include <linux/fsnotify_backend.h>\n",
-              "#include <linux/fsnotify_backend.h>\n#include <linux/workqueue.h>\n",
+              "#include <linux/fsnotify_backend.h>\n"
+              "#include <linux/jump_label.h>\n"
+              "#include <linux/workqueue.h>\n",
               "workqueue include",
+          )
+          replace_exact(
+              "fs/susfs.c",
+              "bool susfs_is_sdcard_android_data_decrypted __read_mostly = false;",
+              "DEFINE_STATIC_KEY_TRUE(susfs_is_sdcard_android_data_not_decrypted);",
+              "sdcard state definition",
+          )
+          replace_exact(
+              "fs/susfs.c",
+              "WRITE_ONCE(susfs_is_sdcard_android_data_decrypted, true);",
+              "if (static_key_enabled(&susfs_is_sdcard_android_data_not_decrypted))\n"
+              "\t\t\tstatic_branch_disable(&susfs_is_sdcard_android_data_not_decrypted);",
+              "sdcard monitor decrypted transition",
+          )
+          replace_exact(
+              "fs/susfs.c",
+              "susfs_is_sdcard_android_data_decrypted = true;",
+              "if (static_key_enabled(&susfs_is_sdcard_android_data_not_decrypted))\n"
+              "\t\t\tstatic_branch_disable(&susfs_is_sdcard_android_data_not_decrypted);",
+              "sdcard monitor fallback transition",
+          )
+
+          replace_exact(
+              "fs/namespace.c",
+              "extern bool susfs_is_sdcard_android_data_decrypted __read_mostly;",
+              "extern struct static_key_true susfs_is_sdcard_android_data_not_decrypted;",
+              "mount state declaration",
+          )
+          replace_count(
+              "fs/namespace.c",
+              "!susfs_is_sdcard_android_data_decrypted",
+              "static_branch_likely(&susfs_is_sdcard_android_data_not_decrypted)",
+              3,
+              "mount not-decrypted conditions",
+          )
+          replace_exact(
+              "fs/namespace.c",
+              "if (susfs_is_sdcard_android_data_decrypted) {",
+              "if (!static_branch_likely(&susfs_is_sdcard_android_data_not_decrypted)) {",
+              "mount decrypted condition",
           )
           extra_work = '''struct work_struct susfs_extra_works;
           static void susfs_run_extra_works(struct work_struct *work)
