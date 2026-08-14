@@ -177,7 +177,7 @@ jobs:
           export CC="ccache clang"
           make -j3 O=out LLVM=1 LLVM_IAS=1 TARGET_PRODUCT=marble Image
           cp out/.config "$GITHUB_WORKSPACE/config.ksu-susfs"
-          cp out/Module.symvers "$GITHUB_WORKSPACE/Module.symvers.ksu-susfs"
+          cp out/vmlinux.symvers "$GITHUB_WORKSPACE/Module.symvers.ksu-susfs"
 
       - name: 校验原有模块 ABI 与关键配置
         run: |
