@@ -1,0 +1,699 @@
+name: Marble Evolution X CNB - Official KernelSU 3.2.5 + SUSFS 2.2 + Kasumi
+
+permissions:
+  contents: read
+
+on:
+  workflow_dispatch:
+
+env:
+  ARCH: arm64
+  KERNEL_REPO: https://github.com/Evolution-X-Devices/kernel_xiaomi_sm8450.git
+  KERNEL_COMMIT: e8fcf25587112c854814dbe399a99110d18c82de
+  KERNEL_RELEASE: 5.10.256-gki-ge8fcf2558711
+  KSU_REPO: https://github.com/tiann/KernelSU.git
+  KSU_TAG: v3.2.5
+  KSU_COMMIT: b0bc817b4e966aa6aa830834eaf6ef765d821d40
+  SUSFS_KSU_REPO: https://gitlab.com/simonpunk/susfs4ksu.git
+  SUSFS_KSU_COMMIT: 3c14ad549f826b1f53878ec8c12253efebeed75a
+  KASUMI_REPO: https://github.com/Anatdx/Kasumi.git
+  KASUMI_COMMIT: 30fc34381ed0d65757dd2325b520a6fc9d8150ef
+  CLANG_REVISION: clang-r563880c
+  CLANG_COMMIT: 7f0f6b2368ece64291856c2b9dcb909f3c87a8d5
+  ARTIFACT_BASENAME: marble-EvolutionX-CNB-5.10.256-OfficialKSU-3.2.5-SUSFS2.2-Kasumi
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - name: Checkout ABK
+        uses: actions/checkout@v6
+
+      - name: Prepare build host
+        run: |
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc
+          sudo apt-get update
+          sudo apt-get install -y bc bison build-essential ccache flex git libelf-dev libssl-dev python3 rsync zip
+          sudo fallocate -l 12G /mnt/kernel-build.swap
+          sudo chmod 600 /mnt/kernel-build.swap
+          sudo mkswap /mnt/kernel-build.swap
+          sudo swapon /mnt/kernel-build.swap
+          free -h
+
+      - name: Checkout exact Evolution X kernel
+        run: |
+          git init kernel
+          git -C kernel remote add origin "$KERNEL_REPO"
+          git -C kernel fetch --depth=1 origin "$KERNEL_COMMIT"
+          git -C kernel checkout --detach FETCH_HEAD
+          test "$(git -C kernel rev-parse HEAD)" = "$KERNEL_COMMIT"
+
+      - name: Restore exact Evolution X Clang
+        id: clang
+        uses: actions/cache/restore@v4
+        with:
+          path: clang/${{ env.CLANG_REVISION }}
+          key: clang-linux-x86-${{ env.CLANG_REVISION }}-${{ env.CLANG_COMMIT }}
+
+      - name: Download exact Evolution X Clang
+        run: |
+          if test -x "clang/$CLANG_REVISION/bin/clang"; then
+            exit 0
+          fi
+          git init clang
+          git -C clang remote add origin https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86
+          git -C clang config remote.origin.promisor true
+          git -C clang config remote.origin.partialclonefilter blob:none
+          git -C clang sparse-checkout init --cone
+          git -C clang sparse-checkout set "$CLANG_REVISION"
+          git -C clang fetch --depth=1 --filter=blob:none origin "$CLANG_COMMIT"
+          git -C clang checkout --detach FETCH_HEAD
+          test "$(git -C clang rev-parse HEAD)" = "$CLANG_COMMIT"
+          test -x "clang/$CLANG_REVISION/bin/clang"
+
+      - name: Save exact Evolution X Clang
+        if: steps.clang.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: clang/${{ env.CLANG_REVISION }}
+          key: ${{ steps.clang.outputs.cache-primary-key }}
+
+      - name: Configure ccache
+        uses: hendrikmuhs/ccache-action@v1.2
+        with:
+          key: marble-evox-cnb-e8fcf255-official-ksu-325
+          max-size: 6G
+
+      - name: Generate stock Evolution X configuration
+        working-directory: kernel
+        run: |
+          export PATH="$GITHUB_WORKSPACE/clang/$CLANG_REVISION/bin:$PATH"
+          export CC="ccache clang"
+          make O=out LLVM=1 LLVM_IAS=1 TARGET_PRODUCT=marble gki_defconfig
+          scripts/kconfig/merge_config.sh -m -O out out/.config \
+            arch/arm64/configs/vendor/waipio_GKI.config \
+            arch/arm64/configs/vendor/xiaomi_GKI.config \
+            arch/arm64/configs/vendor/marble_GKI.config \
+            arch/arm64/configs/vendor/debugfs.config
+          make O=out LLVM=1 LLVM_IAS=1 TARGET_PRODUCT=marble olddefconfig
+          scripts/config --file out/.config --set-str LOCALVERSION "-gki"
+          scripts/config --file out/.config -e LOCALVERSION_AUTO
+          make O=out LLVM=1 LLVM_IAS=1 TARGET_PRODUCT=marble olddefconfig
+          grep -Fx 'CONFIG_LOCALVERSION="-gki"' out/.config
+          make O=out LLVM=1 LLVM_IAS=1 TARGET_PRODUCT=marble syncconfig
+          rm -f out/include/config/kernel.release out/include/generated/utsrelease.h
+          release="$(make -s O=out LLVM=1 LLVM_IAS=1 TARGET_PRODUCT=marble kernelrelease)"
+          echo "Stock kernelrelease=$release"
+          test "$release" = "$KERNEL_RELEASE"
+
+      - name: Save stock ABI inputs
+        working-directory: kernel
+        run: |
+          cp out/.config "$GITHUB_WORKSPACE/config.baseline"
+          cp android/abi_gki_aarch64 "$GITHUB_WORKSPACE/abi_gki_aarch64.baseline"
+          cp android/abi_gki_aarch64_xiaomi "$GITHUB_WORKSPACE/abi_gki_aarch64_xiaomi.baseline"
+
+      - name: Build real stock ABI baseline
+        working-directory: kernel
+        run: |
+          export PATH="$GITHUB_WORKSPACE/clang/$CLANG_REVISION/bin:$PATH"
+          export CC="ccache clang"
+          make -j3 O=out LLVM=1 LLVM_IAS=1 TARGET_PRODUCT=marble Image
+          cp out/vmlinux.symvers "$GITHUB_WORKSPACE/vmlinux.symvers.baseline"
+
+      - name: Apply pinned official SUSFS 2.2 kernel patch
+        working-directory: kernel
+        run: |
+          git init susfs4ksu
+          git -C susfs4ksu remote add origin "$SUSFS_KSU_REPO"
+          git -C susfs4ksu fetch --depth=1 origin "$SUSFS_KSU_COMMIT"
+          git -C susfs4ksu checkout --detach FETCH_HEAD
+          test "$(git -C susfs4ksu rev-parse HEAD)" = "$SUSFS_KSU_COMMIT"
+
+          patch_file="susfs4ksu/kernel_patches/50_add_susfs_in_gki-android12-5.10.patch"
+          test -f "$patch_file"
+          git apply --check "$patch_file"
+          git apply "$patch_file"
+          grep -Fq 'SUSFS_VERSION "v2.2.0"' include/linux/susfs.h
+
+      - name: Integrate official KernelSU 3.2.5 with matching SUSFS patch
+        working-directory: kernel
+        run: |
+          git init KernelSU
+          git -C KernelSU remote add origin "$KSU_REPO"
+          git -C KernelSU fetch --force --tags origin "refs/tags/$KSU_TAG:refs/tags/$KSU_TAG"
+          git -C KernelSU checkout --detach "$KSU_TAG"
+          test "$(git -C KernelSU rev-parse HEAD)" = "$KSU_COMMIT"
+
+          patch_file="susfs4ksu/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch"
+          test -f "$patch_file"
+          git -C KernelSU apply --reject --whitespace=nowarn --exclude=kernel/feature/sucompat.h \
+            "$GITHUB_WORKSPACE/kernel/$patch_file" || true
+
+          python3 - <<'PY'
+          from pathlib import Path
+
+          kconfig = Path("KernelSU/kernel/Kconfig")
+          source = kconfig.read_text()
+          if 'config KSU_SUSFS' not in source:
+              patch = Path("susfs4ksu/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch").read_text().splitlines()
+              start = patch.index('+menu "KernelSU - SUSFS"')
+              end = next(i for i in range(start, len(patch)) if patch[i] == '+endmenu')
+              block = '\n'.join(line[1:] for line in patch[start:end + 1])
+              marker = '\nendmenu\n'
+              if source.count(marker) != 1:
+                  raise SystemExit("Cannot locate KernelSU Kconfig endmenu")
+              kconfig.write_text(source.replace(marker, f'\n{block}{marker}'))
+
+          init = Path("KernelSU/kernel/core/init.c")
+          source = init.read_text()
+          anchor = '#include "selinux/selinux.h"\n'
+          additions = '#include "hook/setuid_hook.h"\n#include "feature/sucompat.h"\n'
+          if additions not in source:
+              if source.count(anchor) != 1:
+                  raise SystemExit("Cannot locate KernelSU init include anchor")
+              source = source.replace(anchor, anchor + additions)
+              init.write_text(source)
+
+          sucompat = Path("KernelSU/kernel/feature/sucompat.h")
+          source = sucompat.read_text()
+          replacements = {
+              "extern bool ksu_su_compat_enabled;":
+                  "extern struct static_key_true ksu_su_compat_enabled;",
+              "long ksu_handle_faccessat_sucompat(int orig_nr, struct pt_regs *regs);\n"
+              "long ksu_handle_stat_sucompat(int orig_nr, struct pt_regs *regs);\n"
+              "long ksu_handle_execve_sucompat(const char __user **filename_user, int orig_nr, struct pt_regs *regs);":
+                  "int ksu_handle_faccessat(int *dfd, const char __user **filename_user, int *mode, int *__unused_flags);\n"
+                  "#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 1, 0) && defined(CONFIG_KSU_SUSFS)\n"
+                  "int ksu_handle_stat(int *dfd, struct filename **filename, int *flags);\n"
+                  "#else\n"
+                  "int ksu_handle_stat(int *dfd, const char __user **filename_user, int *flags);\n"
+                  "#endif\n"
+                  "long ksu_handle_execve_sucompat(const char __user **filename_user, int orig_nr, const struct pt_regs *regs);",
+          }
+          for old, new in replacements.items():
+              if source.count(old) != 1:
+                  raise SystemExit(f"KernelSU 3.2.5 sucompat adaptation mismatch: {old}")
+              source = source.replace(old, new)
+          sucompat.write_text(source)
+
+          rejects = sorted(Path("KernelSU").rglob("*.rej"))
+          expected = {"Kbuild.rej", "Kconfig.rej", "init.c.rej"}
+          names = {path.name for path in rejects}
+          if names != expected:
+              raise SystemExit(f"Unexpected KernelSU SUSFS patch rejects: {names}")
+          for path in rejects:
+              path.unlink()
+          PY
+
+          if false; then python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path("KernelSU/kernel/feature/sucompat.h")
+          source = path.read_text()
+          replacements = {
+              "extern bool ksu_su_compat_enabled;":
+                  "extern struct static_key_true ksu_su_compat_enabled;",
+              "long ksu_handle_faccessat_sucompat(int orig_nr, struct pt_regs *regs);\n"
+              "long ksu_handle_stat_sucompat(int orig_nr, struct pt_regs *regs);\n"
+              "long ksu_handle_execve_sucompat(const char __user **filename_user, int orig_nr, struct pt_regs *regs);":
+                  "int ksu_handle_faccessat(int *dfd, const char __user **filename_user, int *mode, int *__unused_flags);\n"
+                  "#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 1, 0) && defined(CONFIG_KSU_SUSFS)\n"
+                  "int ksu_handle_stat(int *dfd, struct filename **filename, int *flags);\n"
+                  "#else\n"
+                  "int ksu_handle_stat(int *dfd, const char __user **filename_user, int *flags);\n"
+                  "#endif // #if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 1, 0) && defined(CONFIG_KSU_SUSFS)\n"
+                  "long ksu_handle_execve_sucompat(const char __user **filename_user, int orig_nr, const struct pt_regs *regs);",
+          }
+          for old, new in replacements.items():
+              if source.count(old) != 1:
+                  raise SystemExit(f"Official KSU 3.2.5 sucompat adaptation did not match exactly: {old}")
+              source = source.replace(old, new)
+          path.write_text(source)
+
+          # The Evolution X SUSFS 2.0 kernel patch predates the SUSFS string
+          # helpers used by this matching KernelSU integration patch. Keep the
+          # check local to KernelSU so no global kernel ABI is introduced.
+          path = Path("KernelSU/kernel/feature/adb_root.c")
+          source = path.read_text()
+          old = '''static inline long is_exec_adbd(const char *filename)
+          {
+              if (strstr(filename, "adbd"))
+                  pr_info("is_exec_adbd() => filename: %s\\n", filename);
+
+              return (susfs_starts_with(filename, "/apex/") &&
+                          susfs_ends_with(filename, "/adbd"));
+          }'''
+          new = '''static inline long is_exec_adbd(const char *filename)
+          {
+              static const char prefix[] = "/apex/";
+              static const char suffix[] = "/adbd";
+              size_t filename_len = strlen(filename);
+
+              if (strstr(filename, "adbd"))
+                  pr_info("is_exec_adbd() => filename: %s\\n", filename);
+
+              return filename_len >= sizeof(suffix) - 1 &&
+                     !strncmp(filename, prefix, sizeof(prefix) - 1) &&
+                     !strcmp(filename + filename_len - (sizeof(suffix) - 1), suffix);
+          }'''
+          if source.count(old) != 1:
+              raise SystemExit("Official KSU 3.2.5 adb_root SUSFS compatibility block did not match exactly")
+          path.write_text(source.replace(old, new))
+
+          def replace_exact(pathname, old, new, label):
+              path = Path(pathname)
+              source = path.read_text()
+              if source.count(old) != 1:
+                  raise SystemExit(f"Evolution SUSFS hook adaptation did not match exactly: {label}")
+              path.write_text(source.replace(old, new))
+
+          def replace_count(pathname, old, new, expected, label):
+              path = Path(pathname)
+              source = path.read_text()
+              if source.count(old) != expected:
+                  raise SystemExit(
+                      f"Evolution SUSFS hook adaptation count mismatch: {label}; "
+                      f"expected={expected}, actual={source.count(old)}"
+                  )
+              path.write_text(source.replace(old, new))
+
+          # Evolution's SUSFS commit still uses the legacy KSU boolean hook
+          # names. Official KSU 3.2.5 + its matching SUSFS patch exposes
+          # static keys instead. Adapt only those integration call sites.
+          replace_exact(
+              "fs/read_write.c",
+              "extern bool ksu_init_rc_hook __read_mostly;",
+              "extern struct static_key_true ksu_is_init_rc_hook_enabled;",
+              "read hook declaration",
+          )
+          replace_exact(
+              "fs/read_write.c",
+              "if (unlikely(ksu_init_rc_hook))",
+              "if (static_branch_unlikely(&ksu_is_init_rc_hook_enabled))",
+              "read hook condition",
+          )
+          replace_exact(
+              "drivers/input/input.c",
+              "extern bool ksu_input_hook __read_mostly;",
+              "extern struct static_key_true ksu_is_input_hook_enabled;",
+              "input hook declaration",
+          )
+          replace_exact(
+              "drivers/input/input.c",
+              "if (unlikely(ksu_input_hook))",
+              "if (static_branch_unlikely(&ksu_is_input_hook_enabled))",
+              "input hook condition",
+          )
+
+          old = '''extern bool ksu_execveat_hook __read_mostly;
+          extern bool ksu_su_compat_enabled __read_mostly;
+          extern bool susfs_is_sdcard_android_data_decrypted __read_mostly;'''
+          new = '''extern struct static_key_true ksu_su_compat_enabled;
+          extern struct static_key_true susfs_is_sdcard_android_data_not_decrypted;'''
+          replace_exact("fs/exec.c", old, new, "exec hook declarations")
+
+          old = (
+              "if (likely(susfs_is_current_proc_umounted()) || !ksu_su_compat_enabled) {\n"
+              "\t\tgoto orig_flow;\n"
+              "\t}\n\n"
+              "\tif (unlikely(ksu_execveat_hook || !susfs_is_sdcard_android_data_decrypted)) {\n"
+              "\t\tksu_handle_execveat(&fd, &filename, &argv, &envp, &flags);\n"
+              "\t} else if ((__ksu_is_allow_uid_for_current(current_uid().val))) {\n"
+              "\t\tksu_handle_execveat_sucompat(&fd, &filename, &argv, &envp, &flags);\n"
+              "\t}"
+          )
+          new = (
+              "if (likely(susfs_is_current_proc_umounted()))\n"
+              "\t\tgoto orig_flow;\n\n"
+              "\tif (static_branch_likely(&ksu_su_compat_enabled)) {\n"
+              "\t\tif (static_branch_unlikely(&susfs_is_sdcard_android_data_not_decrypted))\n"
+              "\t\t\tksu_handle_execveat(&fd, &filename, &argv, &envp, &flags);\n"
+              "\t\telse\n"
+              "\t\t\tksu_handle_execveat_sucompat(&fd, &filename, &argv, &envp, &flags);\n"
+              "\t}"
+          )
+          replace_exact("fs/exec.c", old, new, "exec hook body")
+
+          replace_exact(
+              "fs/stat.c",
+              "extern bool ksu_init_rc_hook __read_mostly;",
+              "extern struct static_key_true ksu_is_init_rc_hook_enabled;",
+              "fstat hook declaration",
+          )
+          replace_exact(
+              "fs/stat.c",
+              "if (unlikely(ksu_init_rc_hook)) {\n\t\tksu_handle_vfs_fstat(fd, &stat->size);\n\t}",
+              "if (static_branch_unlikely(&ksu_is_init_rc_hook_enabled))\n"
+              "\t\tksu_handle_vfs_fstat(fd, &stat->size);",
+              "fstat hook condition",
+          )
+          replace_exact(
+              "fs/stat.c",
+              "extern bool ksu_su_compat_enabled __read_mostly;",
+              "extern struct static_key_true ksu_su_compat_enabled;",
+              "stat sucompat declaration",
+          )
+          old = (
+              "if (likely(susfs_is_current_proc_umounted()) || !ksu_su_compat_enabled) {\n"
+              "\t\tgoto orig_flow;\n"
+              "\t}\n\n"
+              "\tif (unlikely(__ksu_is_allow_uid_for_current(current_uid().val))) {\n"
+              "\t\tksu_handle_stat(&dfd, &filename, &flags);\n"
+              "\t}"
+          )
+          new = (
+              "if (likely(susfs_is_current_proc_umounted()))\n"
+              "\t\tgoto orig_flow;\n\n"
+              "\tif (static_branch_likely(&ksu_su_compat_enabled)) {\n"
+              "\t\tif (unlikely(__ksu_is_allow_uid_for_current(current_uid().val)))\n"
+              "\t\t\tksu_handle_stat(&dfd, &filename, &flags);\n"
+              "\t}"
+          )
+          replace_exact("fs/stat.c", old, new, "stat sucompat hook body")
+
+          replace_exact(
+              "fs/open.c",
+              "extern bool ksu_su_compat_enabled __read_mostly;",
+              "extern struct static_key_true ksu_su_compat_enabled;",
+              "faccessat sucompat declaration",
+          )
+          old = (
+              "if (likely(susfs_is_current_proc_umounted()) || !ksu_su_compat_enabled) {\n"
+              "\t\tgoto orig_flow;\n"
+              "\t}\n\n"
+              "\tif (unlikely(__ksu_is_allow_uid_for_current(current_uid().val))) {\n"
+              "\t\tksu_handle_faccessat(&dfd, &filename, &mode, NULL);\n"
+              "\t}"
+          )
+          new = (
+              "if (likely(susfs_is_current_proc_umounted()))\n"
+              "\t\tgoto orig_flow;\n\n"
+              "\tif (static_branch_likely(&ksu_su_compat_enabled)) {\n"
+              "\t\tif (unlikely(__ksu_is_allow_uid_for_current(current_uid().val)))\n"
+              "\t\t\tksu_handle_faccessat(&dfd, &filename, &mode, NULL);\n"
+              "\t}"
+          )
+          replace_exact("fs/open.c", old, new, "faccessat sucompat hook body")
+
+          replace_exact(
+              "fs/devpts/inode.c",
+              "#ifdef CONFIG_KSU_SUSFS\nextern int ksu_handle_devpts(struct inode*);\n#endif\n\n",
+              "",
+              "obsolete devpts declaration",
+          )
+          replace_exact(
+              "fs/devpts/inode.c",
+              (
+                  "#ifdef CONFIG_KSU_SUSFS\n"
+                  "\tif (likely(susfs_is_current_proc_umounted())) {\n"
+                  "\t\tgoto orig_flow;\n"
+                  "\t}\n"
+                  "\tksu_handle_devpts(dentry->d_inode);\n"
+                  "orig_flow:\n"
+                  "#endif\n\n"
+              ),
+              "",
+              "obsolete devpts hook",
+          )
+
+          # The matched KSU patch defers SUS_PATH loop refreshes to this work
+          # item. Add the small missing bridge to Evolution's older SUSFS 2.0
+          # source; uid is used there only for logging.
+          replace_exact(
+              "fs/susfs.c",
+              "#include <linux/fsnotify_backend.h>\n",
+              "#include <linux/fsnotify_backend.h>\n"
+              "#include <linux/jump_label.h>\n"
+              "#include <linux/workqueue.h>\n",
+              "workqueue include",
+          )
+          replace_exact(
+              "fs/susfs.c",
+              "bool susfs_is_sdcard_android_data_decrypted __read_mostly = false;",
+              "DEFINE_STATIC_KEY_TRUE(susfs_is_sdcard_android_data_not_decrypted);",
+              "sdcard state definition",
+          )
+          replace_exact(
+              "fs/susfs.c",
+              "WRITE_ONCE(susfs_is_sdcard_android_data_decrypted, true);",
+              "if (static_key_enabled(&susfs_is_sdcard_android_data_not_decrypted))\n"
+              "\t\t\tstatic_branch_disable(&susfs_is_sdcard_android_data_not_decrypted);",
+              "sdcard monitor decrypted transition",
+          )
+          replace_exact(
+              "fs/susfs.c",
+              "susfs_is_sdcard_android_data_decrypted = true;",
+              "if (static_key_enabled(&susfs_is_sdcard_android_data_not_decrypted))\n"
+              "\t\t\tstatic_branch_disable(&susfs_is_sdcard_android_data_not_decrypted);",
+              "sdcard monitor fallback transition",
+          )
+
+          replace_exact(
+              "fs/namespace.c",
+              "extern bool susfs_is_sdcard_android_data_decrypted __read_mostly;",
+              "extern struct static_key_true susfs_is_sdcard_android_data_not_decrypted;",
+              "mount state declaration",
+          )
+          replace_count(
+              "fs/namespace.c",
+              "!susfs_is_sdcard_android_data_decrypted",
+              "static_branch_likely(&susfs_is_sdcard_android_data_not_decrypted)",
+              3,
+              "mount not-decrypted conditions",
+          )
+          replace_exact(
+              "fs/namespace.c",
+              "if (susfs_is_sdcard_android_data_decrypted) {",
+              "if (!static_branch_likely(&susfs_is_sdcard_android_data_not_decrypted)) {",
+              "mount decrypted condition",
+          )
+          extra_work = '''struct work_struct susfs_extra_works;
+          static void susfs_run_extra_works(struct work_struct *work)
+          {
+          #ifdef CONFIG_KSU_SUSFS_SUS_PATH
+              susfs_run_sus_path_loop(0);
+          #endif
+          }
+
+          '''
+          replace_exact(
+              "fs/susfs.c",
+              "/* susfs_init */\n",
+              extra_work + "/* susfs_init */\n",
+              "SUSFS deferred work definition",
+          )
+          replace_exact(
+              "fs/susfs.c",
+              "void susfs_init(void) {\n",
+              "void susfs_init(void) {\n\tINIT_WORK(&susfs_extra_works, susfs_run_extra_works);\n",
+              "SUSFS deferred work initialization",
+          )
+          PY
+          fi
+
+          test "$(git -C KernelSU rev-parse HEAD)" = "$KSU_COMMIT"
+          grep -Fq 'feature/selinux_hide.o' KernelSU/kernel/Kbuild
+          grep -Fq 'KSU_FEATURE_SELINUX_HIDE' KernelSU/kernel/feature/selinux_hide.c
+          grep -Fq 'config KSU_SUSFS' KernelSU/kernel/Kconfig
+
+          ln -s ../KernelSU/kernel drivers/kernelsu
+          test -f drivers/kernelsu/Kconfig
+          sed -i '/source "drivers\/most\/Kconfig"/a source "drivers/kernelsu/Kconfig"' drivers/Kconfig
+          printf '\nobj-$(CONFIG_KSU) += kernelsu/\n' >> drivers/Makefile
+
+      - name: Configure official KernelSU and SUSFS
+        working-directory: kernel
+        run: |
+          scripts/config --file out/.config --set-str LOCALVERSION "-gki-ge8fcf2558711"
+          scripts/config --file out/.config -d LOCALVERSION_AUTO
+          scripts/config --file out/.config -e KSU
+          scripts/config --file out/.config -d KSU_DEBUG
+          scripts/config --file out/.config -d KSU_DISABLE_MANAGER
+          scripts/config --file out/.config -d KSU_DISABLE_POLICY
+          scripts/config --file out/.config -e KSU_SUSFS
+          scripts/config --file out/.config -e KSU_SUSFS_SUS_PATH
+          scripts/config --file out/.config -e KSU_SUSFS_SUS_MOUNT
+          scripts/config --file out/.config -e KSU_SUSFS_SUS_KSTAT
+          scripts/config --file out/.config -e KSU_SUSFS_SPOOF_UNAME
+          scripts/config --file out/.config -e KSU_SUSFS_ENABLE_LOG
+          scripts/config --file out/.config -e KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS
+          scripts/config --file out/.config -e KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG
+          scripts/config --file out/.config -e KSU_SUSFS_OPEN_REDIRECT
+          scripts/config --file out/.config -e KSU_SUSFS_SUS_MAP
+
+          export PATH="$GITHUB_WORKSPACE/clang/$CLANG_REVISION/bin:$PATH"
+          export LOCALVERSION=
+          make O=out LLVM=1 LLVM_IAS=1 TARGET_PRODUCT=marble olddefconfig
+          make O=out LLVM=1 LLVM_IAS=1 TARGET_PRODUCT=marble syncconfig
+          rm -f out/include/config/kernel.release out/include/generated/utsrelease.h
+          release="$(make -s O=out LLVM=1 LLVM_IAS=1 TARGET_PRODUCT=marble kernelrelease)"
+          echo "Patched kernelrelease=$release"
+          test "$release" = "$KERNEL_RELEASE"
+
+      - name: Build official KernelSU 3.2.5 and SUSFS kernel
+        working-directory: kernel
+        run: |
+          export PATH="$GITHUB_WORKSPACE/clang/$CLANG_REVISION/bin:$PATH"
+          export LOCALVERSION=
+          export CC="ccache clang"
+          make -j3 O=out LLVM=1 LLVM_IAS=1 TARGET_PRODUCT=marble Image
+          cp out/.config "$GITHUB_WORKSPACE/config.official-ksu-3.2.5-susfs"
+          cp out/vmlinux.symvers "$GITHUB_WORKSPACE/Module.symvers.official-ksu-3.2.5-susfs"
+
+      - name: Build Kasumi LKM against the exact marble kernel
+        working-directory: kernel
+        run: |
+          git init "$GITHUB_WORKSPACE/Kasumi"
+          git -C "$GITHUB_WORKSPACE/Kasumi" remote add origin "$KASUMI_REPO"
+          git -C "$GITHUB_WORKSPACE/Kasumi" fetch --depth=1 origin "$KASUMI_COMMIT"
+          git -C "$GITHUB_WORKSPACE/Kasumi" checkout --detach FETCH_HEAD
+          test "$(git -C "$GITHUB_WORKSPACE/Kasumi" rev-parse HEAD)" = "$KASUMI_COMMIT"
+
+          # This kernel uses MODVERSIONS. Reusing its generated symbol table is
+          # mandatory; a generic DDK-built Kasumi module has incompatible CRCs.
+          cp out/vmlinux.symvers out/Module.symvers
+          sed -i '/^ccflags-y += -gz=none$/a ccflags-y += -fno-stack-protector' \
+            "$GITHUB_WORKSPACE/Kasumi/src/Makefile"
+
+          export PATH="$GITHUB_WORKSPACE/clang/$CLANG_REVISION/bin:$PATH"
+          export CC="ccache clang"
+          make -j3 O=out LLVM=1 LLVM_IAS=1 TARGET_PRODUCT=marble \
+            M="$GITHUB_WORKSPACE/Kasumi/src" modules
+
+          cp "$GITHUB_WORKSPACE/Kasumi/src/kasumi_lkm.ko" \
+            "$GITHUB_WORKSPACE/${ARTIFACT_BASENAME}-android12-5.10_arm64_kasumi_lkm.ko"
+          test -s "$GITHUB_WORKSPACE/${ARTIFACT_BASENAME}-android12-5.10_arm64_kasumi_lkm.ko"
+          modinfo "$GITHUB_WORKSPACE/${ARTIFACT_BASENAME}-android12-5.10_arm64_kasumi_lkm.ko" | grep -F "vermagic:       $KERNEL_RELEASE"
+
+      - name: Validate ABI, configuration and embedded features
+        id: validation
+        continue-on-error: true
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          def read_symvers(path):
+              result = {}
+              for line in Path(path).read_text().splitlines():
+                  fields = line.split()
+                  if len(fields) >= 2:
+                      result[fields[1]] = fields[0]
+              return result
+
+          def read_abi_lists(*paths):
+              result = set()
+              for path in paths:
+                  for line in Path(path).read_text().splitlines():
+                      line = line.strip()
+                      if line and not line.startswith(('#', '[')):
+                          result.add(line)
+              return result
+
+          declared = read_abi_lists("abi_gki_aarch64.baseline", "abi_gki_aarch64_xiaomi.baseline")
+          baseline = read_symvers("vmlinux.symvers.baseline")
+          patched = read_symvers("Module.symvers.official-ksu-3.2.5-susfs")
+          missing = sorted(set(baseline) - set(patched))
+          crc_mismatch = sorted(
+              symbol for symbol in baseline.keys() & patched.keys()
+              if baseline[symbol] != patched[symbol]
+          )
+          baseline_declared_missing = sorted(declared - set(baseline))
+          added = sorted(set(patched) - set(baseline))
+          report = (
+              f"declared={len(declared)}\nbaseline={len(baseline)}\npatched={len(patched)}\n"
+              f"baseline_declared_missing={len(baseline_declared_missing)}\n"
+              f"missing={len(missing)}\ncrc_mismatch={len(crc_mismatch)}\nadded={len(added)}\n"
+              + "\n".join(f"BASELINE_DECLARED_MISSING {x}" for x in baseline_declared_missing)
+              + "\n"
+              + "\n".join(f"MISSING {x}" for x in missing)
+              + "\n"
+              + "\n".join(f"CRC_MISMATCH {x} {baseline[x]} {patched[x]}" for x in crc_mismatch)
+              + "\n"
+              + "\n".join(f"ADDED {x}" for x in added)
+              + "\n"
+          )
+          Path("abi-report.txt").write_text(report)
+          print(report)
+          if missing or crc_mismatch:
+              raise SystemExit(f"Stock ABI incompatible: missing={len(missing)}, crc_mismatch={len(crc_mismatch)}")
+
+          config = set(Path("config.official-ksu-3.2.5-susfs").read_text().splitlines())
+          required = {
+              'CONFIG_MODVERSIONS=y', 'CONFIG_KSU=y', 'CONFIG_KSU_SUSFS=y',
+              'CONFIG_KSU_SUSFS_SUS_PATH=y', 'CONFIG_KSU_SUSFS_SUS_MOUNT=y',
+              'CONFIG_KSU_SUSFS_SUS_KSTAT=y', 'CONFIG_KSU_SUSFS_SPOOF_UNAME=y',
+              'CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS=y',
+              'CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG=y',
+              'CONFIG_KSU_SUSFS_OPEN_REDIRECT=y', 'CONFIG_KSU_SUSFS_SUS_MAP=y',
+          }
+          absent = sorted(required - config)
+          if absent:
+              raise SystemExit(f"Missing required config: {absent}")
+          PY
+
+          test "$(git -C kernel/KernelSU rev-parse HEAD)" = "$KSU_COMMIT"
+          test "$(git -C kernel/susfs4ksu rev-parse HEAD)" = "$SUSFS_KSU_COMMIT"
+          test "$(git -C Kasumi rev-parse HEAD)" = "$KASUMI_COMMIT"
+          grep -Fq 'SUSFS_VERSION "v2.2.0"' kernel/include/linux/susfs.h
+          strings kernel/out/arch/arm64/boot/Image | grep -F "Linux version $KERNEL_RELEASE"
+          strings kernel/out/arch/arm64/boot/Image | grep -m1 -F 'selinux_hide:'
+          strings kernel/out/arch/arm64/boot/Image | grep -m1 -F 'susfs'
+
+          {
+            echo "kernel_commit=$KERNEL_COMMIT"
+            echo "kernel_release=$KERNEL_RELEASE"
+            echo "kernelsu_tag=$KSU_TAG"
+            echo "kernelsu_commit=$KSU_COMMIT"
+            echo "susfs_ksu_patch_commit=$SUSFS_KSU_COMMIT"
+            echo "susfs_version=v2.2.0"
+            echo "kasumi_commit=$KASUMI_COMMIT"
+            echo "clang_revision=$CLANG_REVISION"
+            echo "clang_commit=$CLANG_COMMIT"
+          } > build-provenance.txt
+
+      - name: Package marble-only AK3 and official manager
+        run: |
+          git clone --depth=1 --branch gki-2.0 https://github.com/WildKernels/AnyKernel3.git ak3
+          rm -rf ak3/.git
+          cp kernel/out/arch/arm64/boot/Image ak3/Image
+          sed -i 's/do.devicecheck=0/do.devicecheck=1/' ak3/anykernel.sh
+          sed -i 's/device.name1=/device.name1=marble/' ak3/anykernel.sh
+          sed -i 's/device.name2=/device.name2=marblein/' ak3/anykernel.sh
+          sed -i 's/supported.versions=/supported.versions=17/' ak3/anykernel.sh
+          cd ak3
+          zip -r9 "../$ARTIFACT_BASENAME-AK3.zip" . -x '*.git*'
+          cd ..
+
+          curl -fL \
+            "https://github.com/tiann/KernelSU/releases/download/$KSU_TAG/KernelSU_v3.2.5_32525-release.apk" \
+            -o KernelSU_v3.2.5_32525-release.apk
+          sha256sum "$ARTIFACT_BASENAME-AK3.zip" KernelSU_v3.2.5_32525-release.apk \
+            "$ARTIFACT_BASENAME-android12-5.10_arm64_kasumi_lkm.ko" \
+            kernel/out/arch/arm64/boot/Image > SHA256SUMS.txt
+
+      - name: Upload build and diagnostic artifacts
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: ${{ env.ARTIFACT_BASENAME }}
+          if-no-files-found: error
+          retention-days: 30
+          path: |
+            ${{ env.ARTIFACT_BASENAME }}-AK3.zip
+            KernelSU_v3.2.5_32525-release.apk
+            ${{ env.ARTIFACT_BASENAME }}-android12-5.10_arm64_kasumi_lkm.ko
+            kernel/out/arch/arm64/boot/Image
+            config.baseline
+            config.official-ksu-3.2.5-susfs
+            abi_gki_aarch64.baseline
+            abi_gki_aarch64_xiaomi.baseline
+            Module.symvers.official-ksu-3.2.5-susfs
+            abi-report.txt
+            build-provenance.txt
+            SHA256SUMS.txt
+
+      - name: Enforce validation gate
+        if: always()
+        run: test "${{ steps.validation.outcome }}" = "success"
