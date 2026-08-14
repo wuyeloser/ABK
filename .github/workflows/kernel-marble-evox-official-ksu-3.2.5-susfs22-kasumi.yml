@@ -133,6 +133,8 @@ jobs:
 
           patch_file="susfs4ksu/kernel_patches/50_add_susfs_in_gki-android12-5.10.patch"
           test -f "$patch_file"
+          cp susfs4ksu/kernel_patches/fs/* ./fs/
+          cp susfs4ksu/kernel_patches/include/linux/* ./include/linux/
           git apply --check "$patch_file"
           git apply "$patch_file"
           grep -Fq 'SUSFS_VERSION "v2.2.0"' include/linux/susfs.h
