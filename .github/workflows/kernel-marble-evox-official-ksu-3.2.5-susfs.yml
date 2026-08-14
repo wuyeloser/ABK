@@ -222,6 +222,122 @@ jobs:
           if source.count(old) != 1:
               raise SystemExit("Official KSU 3.2.5 adb_root SUSFS compatibility block did not match exactly")
           path.write_text(source.replace(old, new))
+
+          def replace_exact(pathname, old, new, label):
+              path = Path(pathname)
+              source = path.read_text()
+              if source.count(old) != 1:
+                  raise SystemExit(f"Evolution SUSFS hook adaptation did not match exactly: {label}")
+              path.write_text(source.replace(old, new))
+
+          # Evolution's SUSFS commit still uses the legacy KSU boolean hook
+          # names. Official KSU 3.2.5 + its matching SUSFS patch exposes
+          # static keys instead. Adapt only those integration call sites.
+          replace_exact(
+              "fs/read_write.c",
+              "extern bool ksu_init_rc_hook __read_mostly;",
+              "extern struct static_key_true ksu_is_init_rc_hook_enabled;",
+              "read hook declaration",
+          )
+          replace_exact(
+              "fs/read_write.c",
+              "if (unlikely(ksu_init_rc_hook))",
+              "if (static_branch_unlikely(&ksu_is_init_rc_hook_enabled))",
+              "read hook condition",
+          )
+          replace_exact(
+              "drivers/input/input.c",
+              "extern bool ksu_input_hook __read_mostly;",
+              "extern struct static_key_true ksu_is_input_hook_enabled;",
+              "input hook declaration",
+          )
+          replace_exact(
+              "drivers/input/input.c",
+              "if (unlikely(ksu_input_hook))",
+              "if (static_branch_unlikely(&ksu_is_input_hook_enabled))",
+              "input hook condition",
+          )
+
+          old = '''extern bool ksu_execveat_hook __read_mostly;
+          extern bool ksu_su_compat_enabled __read_mostly;
+          extern bool susfs_is_sdcard_android_data_decrypted __read_mostly;'''
+          new = '''extern struct static_key_true ksu_su_compat_enabled;
+          extern struct static_key_true susfs_is_sdcard_android_data_not_decrypted;'''
+          replace_exact("fs/exec.c", old, new, "exec hook declarations")
+
+          old = (
+              "if (likely(susfs_is_current_proc_umounted()) || !ksu_su_compat_enabled) {\n"
+              "\t\tgoto orig_flow;\n"
+              "\t}\n\n"
+              "\tif (unlikely(ksu_execveat_hook || !susfs_is_sdcard_android_data_decrypted)) {\n"
+              "\t\tksu_handle_execveat(&fd, &filename, &argv, &envp, &flags);\n"
+              "\t} else if ((__ksu_is_allow_uid_for_current(current_uid().val))) {\n"
+              "\t\tksu_handle_execveat_sucompat(&fd, &filename, &argv, &envp, &flags);\n"
+              "\t}"
+          )
+          new = (
+              "if (likely(susfs_is_current_proc_umounted()))\n"
+              "\t\tgoto orig_flow;\n\n"
+              "\tif (static_branch_likely(&ksu_su_compat_enabled)) {\n"
+              "\t\tif (static_branch_unlikely(&susfs_is_sdcard_android_data_not_decrypted))\n"
+              "\t\t\tksu_handle_execveat(&fd, &filename, &argv, &envp, &flags);\n"
+              "\t\telse\n"
+              "\t\t\tksu_handle_execveat_sucompat(&fd, &filename, &argv, &envp, &flags);\n"
+              "\t}"
+          )
+          replace_exact("fs/exec.c", old, new, "exec hook body")
+
+          replace_exact(
+              "fs/devpts/inode.c",
+              "#ifdef CONFIG_KSU_SUSFS\nextern int ksu_handle_devpts(struct inode*);\n#endif\n\n",
+              "",
+              "obsolete devpts declaration",
+          )
+          replace_exact(
+              "fs/devpts/inode.c",
+              (
+                  "#ifdef CONFIG_KSU_SUSFS\n"
+                  "\tif (likely(susfs_is_current_proc_umounted())) {\n"
+                  "\t\tgoto orig_flow;\n"
+                  "\t}\n"
+                  "\tksu_handle_devpts(dentry->d_inode);\n"
+                  "orig_flow:\n"
+                  "#endif\n\n"
+              ),
+              "",
+              "obsolete devpts hook",
+          )
+
+          # The matched KSU patch defers SUS_PATH loop refreshes to this work
+          # item. Add the small missing bridge to Evolution's older SUSFS 2.0
+          # source; uid is used there only for logging.
+          replace_exact(
+              "fs/susfs.c",
+              "#include <linux/fsnotify_backend.h>\n",
+              "#include <linux/fsnotify_backend.h>\n#include <linux/workqueue.h>\n",
+              "workqueue include",
+          )
+          extra_work = '''struct work_struct susfs_extra_works;
+          static void susfs_run_extra_works(struct work_struct *work)
+          {
+          #ifdef CONFIG_KSU_SUSFS_SUS_PATH
+              susfs_run_sus_path_loop(0);
+          #endif
+          }
+
+          '''
+          replace_exact(
+              "fs/susfs.c",
+              "/* susfs_init */\n",
+              extra_work + "/* susfs_init */\n",
+              "SUSFS deferred work definition",
+          )
+          replace_exact(
+              "fs/susfs.c",
+              "void susfs_init(void) {\n",
+              "void susfs_init(void) {\n\tINIT_WORK(&susfs_extra_works, susfs_run_extra_works);\n",
+              "SUSFS deferred work initialization",
+          )
           PY
 
           test "$(git -C KernelSU rev-parse HEAD)" = "$KSU_COMMIT"
