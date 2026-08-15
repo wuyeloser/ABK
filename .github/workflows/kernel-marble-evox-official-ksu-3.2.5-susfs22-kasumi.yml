@@ -176,7 +176,16 @@ jobs:
               if source.count(anchor) != 1:
                   raise SystemExit("Cannot locate KernelSU init include anchor")
               source = source.replace(anchor, anchor + additions)
-              init.write_text(source)
+          # SUSFS's integration patch removes this declaration, but the pinned
+          # official KernelSU v3.2.5 still uses it in its legacy late-load path.
+          # Preserve the declaration: this built-in GKI always initializes it
+          # to false, while avoiding an undefined-symbol build failure.
+          late_load = 'struct cred *ksu_cred;\nbool ksu_late_loaded;'
+          if 'bool ksu_late_loaded;' not in source:
+              if source.count('struct cred *ksu_cred;') != 1:
+                  raise SystemExit("Cannot locate KernelSU late-load declaration anchor")
+              source = source.replace('struct cred *ksu_cred;', late_load)
+          init.write_text(source)
 
           sucompat = Path("KernelSU/kernel/feature/sucompat.h")
           source = sucompat.read_text()
