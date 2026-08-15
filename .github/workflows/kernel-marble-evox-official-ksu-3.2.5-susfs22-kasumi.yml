@@ -550,6 +550,9 @@ jobs:
           export LOCALVERSION=
           export CC="ccache clang"
           make -j3 O=out LLVM=1 LLVM_IAS=1 TARGET_PRODUCT=marble Image
+          # Image alone does not create the external-module linker script in
+          # an out-of-tree build. Kasumi needs this generated file at MODPOST.
+          make -j3 O=out LLVM=1 LLVM_IAS=1 TARGET_PRODUCT=marble modules_prepare
           cp out/.config "$GITHUB_WORKSPACE/config.official-ksu-3.2.5-susfs"
           cp out/vmlinux.symvers "$GITHUB_WORKSPACE/Module.symvers.official-ksu-3.2.5-susfs"
 
