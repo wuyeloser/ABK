@@ -1079,7 +1079,16 @@ jobs:
           FORMATTED_BRANCH="${{ inputs.android_version }}-${{ inputs.kernel_version }}-${{ inputs.os_patch_level }}"
           echo "初始化 repo，分支: common-${FORMATTED_BRANCH}"
 
-          $REPO init --depth=1 -u https://android.googlesource.com/kernel/manifest -b common-${FORMATTED_BRANCH} --repo-rev=v2.16
+          repo_init_attempt=1
+          until $REPO init --depth=1 -u https://android.googlesource.com/kernel/manifest -b common-${FORMATTED_BRANCH} --repo-rev=v2.16; do
+            if [ "$repo_init_attempt" -ge 3 ]; then
+              echo "::error::AOSP manifest 初始化连续 3 次失败。"
+              exit 1
+            fi
+            echo "::warning::AOSP manifest 初始化失败，第 ${repo_init_attempt} 次重试将在 15 秒后开始。"
+            sleep 15
+            repo_init_attempt=$((repo_init_attempt + 1))
+          done
 
           REMOTE_BRANCH=$(git ls-remote https://android.googlesource.com/kernel/common ${FORMATTED_BRANCH})
           DEFAULT_MANIFEST_PATH=.repo/manifests/default.xml
@@ -1089,7 +1098,17 @@ jobs:
             sed -i "s/\"${FORMATTED_BRANCH}\"/\"deprecated\/${FORMATTED_BRANCH}\"/g" $DEFAULT_MANIFEST_PATH
           fi
 
-          $REPO --trace sync -c -j$(nproc --all) --no-tags --fail-fast
+          # Android 的 AOSP 工具链仓库偶发网络抖动；限制并发并重试，避免一次 fetch 超时直接中止构建。
+          repo_sync_attempt=1
+          until $REPO sync -c -j4 --no-tags --fail-fast --retry-fetches=2; do
+            if [ "$repo_sync_attempt" -ge 3 ]; then
+              echo "::error::AOSP 源码同步连续 3 次失败。请查看上方最后一次 git fetch 错误。"
+              exit 1
+            fi
+            echo "::warning::AOSP 源码同步失败，第 ${repo_sync_attempt} 次重试将在 20 秒后开始。"
+            sleep 20
+            repo_sync_attempt=$((repo_sync_attempt + 1))
+          done
           echo "REMOTE_BRANCH=$REMOTE_BRANCH" >> $GITHUB_ENV
 
           if [ "$SOURCE_MODE" = "custom_git" ]; then
