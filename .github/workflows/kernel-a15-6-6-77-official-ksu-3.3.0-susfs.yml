@@ -1,0 +1,40 @@
+name: Android 15 6.6.77 - Official KernelSU 3.3.0 + SUSFS
+
+permissions:
+  contents: write
+  actions: write
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    uses: ./.github/workflows/build.yml
+    secrets: inherit
+    with:
+      android_version: "android15"
+      kernel_version: "6.6"
+      sub_level: "77"
+      os_patch_level: "2025-03"
+      ksu_variant: "Official"
+      ksu_branch: "Custom(自定义)"
+      custom_ref: "932014ab5b2c9b74a3d11e2ec4d17dd10fc9442e"
+      susfs_ref: "937215cb3a1b1f333d764c366c7a49972fa8e7a0"
+      version: "6.6.77-android15-9"
+      build_time: "N"
+      enable_susfs: true
+      use_zram: false
+      use_bbg: false
+      use_ddk: false
+      use_ntsync: false
+      use_networking: false
+      use_kpm: false
+      use_rekernel: false
+      supp_op: false
+      virtualization_support: "off"
+      zram_full_algo: false
+      zram_extra_algos: ""
+      kpm_password: ""
+      custom_external_modules: ""
+      custom_kernel_options: ""
+      upload_aux_artifacts: true

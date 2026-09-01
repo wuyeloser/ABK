@@ -73,6 +73,11 @@ on:
       custom_ref:
         required: false
         type: string
+      susfs_ref:
+        description: "固定 SUSFS 提交（留空则使用对应分支最新提交）"
+        required: false
+        type: string
+        default: ""
       version:
         required: false
         type: string
@@ -236,6 +241,7 @@ jobs:
           echo "补丁级别      : ${{ inputs.os_patch_level }}"
           echo "KSU 变体      : ${{ inputs.ksu_variant }}"
           echo "KSU 分支      : $effective_ksu_branch"
+          echo "SUSFS 固定提交: ${{ inputs.susfs_ref || '分支最新' }}"
           echo "管理器包名    : ${{ inputs.manager_package || 'app/signing/abk-manager-cert.env' }}"
           echo "构建时间      : ${{ inputs.build_time }}"
           echo "SUSFS 状态    : ${{ inputs.enable_susfs }}"
@@ -677,6 +683,7 @@ jobs:
         run: |
           ANYKERNEL_BRANCH="gki-2.0"
           SUSFS_BRANCH="gki-${{ inputs.android_version }}-${{ inputs.kernel_version }}"
+          SUSFS_REF="${{ inputs.susfs_ref }}"
 
           retry_git_clone() {
             local repo_url="$1"
@@ -704,8 +711,21 @@ jobs:
             echo "克隆 SUSFS (分支: $SUSFS_BRANCH)..."
             retry_git_clone https://gitlab.com/simonpunk/susfs4ksu.git "$SUSFS_BRANCH" susfs4ksu
 
-            CONFIG_FILE="config/config"
-            if [ -f "$CONFIG_FILE" ]; then
+            if [ -n "$SUSFS_REF" ]; then
+              echo "固定 SUSFS 提交: $SUSFS_REF"
+              if ! git -C susfs4ksu fetch --depth=1 origin "$SUSFS_REF"; then
+                echo "::error::无法获取指定的 SUSFS 提交: $SUSFS_REF"
+                exit 1
+              fi
+              git -C susfs4ksu checkout --detach FETCH_HEAD
+              SUSFS_RESOLVED_SHA="$(git -C susfs4ksu rev-parse HEAD)"
+              if [ "$SUSFS_RESOLVED_SHA" != "$SUSFS_REF" ]; then
+                echo "::error::SUSFS 提交校验失败: expected=$SUSFS_REF actual=$SUSFS_RESOLVED_SHA"
+                exit 1
+              fi
+            else
+              CONFIG_FILE="config/config"
+              if [ -f "$CONFIG_FILE" ]; then
               CUSTOM_ENABLED=$(grep "^custom=" "$CONFIG_FILE" | cut -d'=' -f2)
               if [ "$CUSTOM_ENABLED" == "true" ]; then
                 CUSTOM_COMMIT=$(grep "^${SUSFS_BRANCH}=" "$CONFIG_FILE" | cut -d'=' -f2)
@@ -716,8 +736,11 @@ jobs:
                   cd ..
                 fi
               fi
+              fi
             fi
 
+            SUSFS_RESOLVED_SHA="$(git -C susfs4ksu rev-parse HEAD)"
+            echo "SUSFS_RESOLVED_SHA=$SUSFS_RESOLVED_SHA" >> $GITHUB_ENV
             SUSFS_LATEST_COMMIT_DATE=$(git -C susfs4ksu log -1 --date=format:'%Y-%m-%d %H:%M:%S %z' --format='%cd')
             echo "SUSFS_LATEST_COMMIT_DATE=$SUSFS_LATEST_COMMIT_DATE" >> $GITHUB_ENV
             echo "SUSFS 仓库最新提交日期: $SUSFS_LATEST_COMMIT_DATE"
