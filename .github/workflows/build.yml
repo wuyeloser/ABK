@@ -4497,7 +4497,6 @@ jobs:
               text = ensure_include(text, "#include <linux/fs_struct.h>", "#include <linux/minmax.h>\n")
               text = ensure_include(text, '#include "selinux/selinux.h"', "#include <linux/fs_struct.h>\n")
               text = ensure_include(text, '#include "objsec.h"', '#include "selinux/selinux.h"\n')
-              text = ensure_include(text, '#include "feature/adb_root.h"', '#include "feature/sucompat.h"\n')
               text = ensure_include(text, '#include "uapi/sulog.h"', '#include "sulog/event.h"\n')
               text = text.replace('#include "ksu.h"\n', "")
               text = text.replace('#include "util.h"\n', "")
@@ -4614,19 +4613,11 @@ jobs:
                           return 0;
                       }
 
-              #ifdef CONFIG_COMPAT
-                      if (unlikely(envp_user->is_compat))
-                          ret = ksu_adb_root_handle_execve(filename->name, (void ***)&envp_user->ptr.compat);
-                      else
-                          ret = ksu_adb_root_handle_execve(filename->name, (void ***)&envp_user->ptr.native);
-              #else
-                      ret = ksu_adb_root_handle_execve(filename->name, (void ***)&envp_user->ptr.native);
-              #endif
-
-                      if (ret) {
-                          pr_err("adb root failed: %d\\n", ret);
-                          return ret;
-                      }
+                      /*
+                       * KernelSU 3.3.0 handles ADB root in syscall_event_bridge
+                       * through struct pt_regs.  The pre-3.3 SUSFS template called
+                       * the old filename/envp helper here; do not duplicate it.
+                       */
                   }
 
                   return -EINVAL;
