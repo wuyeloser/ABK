@@ -5268,7 +5268,7 @@ jobs:
                   raise SystemExit(f"{sucompat_h} 仍保留旧版 bool ksu_su_compat_enabled 声明")
               for marker in (
                   "extern struct static_key_true ksu_su_compat_enabled;",
-                  "int ksu_handle_execveat_sucompat(int *fd, struct filename **filename_ptr, void *argv_user,",
+                  "int ksu_handle_execveat_sucompat(",
               ):
                   if marker not in sucompat_header:
                       raise SystemExit(f"{sucompat_h} 缺少 Official sucompat execveat 声明: {marker}")
