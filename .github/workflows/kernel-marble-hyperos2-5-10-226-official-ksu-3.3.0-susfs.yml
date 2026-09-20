@@ -1,0 +1,43 @@
+name: Marble HyperOS 2 5.10.226 - Official KernelSU 3.3.0 + SUSFS 2.3
+
+permissions:
+  contents: write
+  actions: write
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    uses: ./.github/workflows/build.yml
+    secrets: inherit
+    with:
+      # OS2.0.215.0 官改包 boot.img 的真实 KMI：
+      # 5.10.226-android12-9，源码对应 android12-5.10-2024-11_r8。
+      android_version: "android12"
+      kernel_version: "5.10"
+      sub_level: "226"
+      os_patch_level: "2024-11"
+      revision: "r8"
+      ksu_variant: "Official"
+      ksu_branch: "Custom(自定义)"
+      custom_ref: "932014ab5b2c9b74a3d11e2ec4d17dd10fc9442e"
+      susfs_ref: "fb16b41a65180979f05eac837681c4dd0addffd1"
+      version: "5.10.226-android12-9"
+      build_time: "N"
+      enable_susfs: true
+      use_zram: false
+      use_bbg: false
+      use_ddk: false
+      use_ntsync: false
+      use_networking: false
+      use_kpm: false
+      use_rekernel: false
+      supp_op: false
+      virtualization_support: "off"
+      zram_full_algo: false
+      zram_extra_algos: ""
+      kpm_password: ""
+      custom_external_modules: ""
+      custom_kernel_options: ""
+      upload_aux_artifacts: true
