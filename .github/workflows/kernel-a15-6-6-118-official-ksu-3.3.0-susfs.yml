@@ -1,4 +1,4 @@
-name: Android 15 6.6.118 - Official KernelSU 3.3.0 + SUSFS + KPatch-Next ready
+name: Android 15 6.6.118 - Official KernelSU latest + SUSFS + KPatch-Next ready
 
 permissions:
   contents: write
@@ -19,7 +19,7 @@ jobs:
       os_patch_level: "2026-01"
       ksu_variant: "Official"
       ksu_branch: "Custom(自定义)"
-      custom_ref: "932014ab5b2c9b74a3d11e2ec4d17dd10fc9442e"
+      custom_ref: "08a3b087e49227c8a6731c5f1114998b5e25255b"
       susfs_ref: "a0f9c59e2243f8a5db955f4ad1686d5e0ad26e1a"
       version: "6.6.118-android15-8"
       build_time: "N"
