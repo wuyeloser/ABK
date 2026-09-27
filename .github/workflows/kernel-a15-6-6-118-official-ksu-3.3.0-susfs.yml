@@ -1,4 +1,4 @@
-name: Android 15 6.6.118 - Official KernelSU 3.3.0 + SUSFS
+name: Android 15 6.6.118 - Official KernelSU 3.3.0 + SUSFS + KPatch-Next ready
 
 permissions:
   contents: write
@@ -20,7 +20,7 @@ jobs:
       ksu_variant: "Official"
       ksu_branch: "Custom(自定义)"
       custom_ref: "932014ab5b2c9b74a3d11e2ec4d17dd10fc9442e"
-      susfs_ref: "937215cb3a1b1f333d764c366c7a49972fa8e7a0"
+      susfs_ref: "a0f9c59e2243f8a5db955f4ad1686d5e0ad26e1a"
       version: "6.6.118-android15-8"
       build_time: "N"
       enable_susfs: true
@@ -29,6 +29,8 @@ jobs:
       use_ddk: false
       use_ntsync: false
       use_networking: false
+      # KPatch-Next supplies KPM on top of Official KernelSU; its own patcher
+      # requires KALLSYMS_ALL and expects built-in CONFIG_KPM to remain off.
       use_kpm: false
       use_rekernel: false
       supp_op: false
@@ -37,5 +39,7 @@ jobs:
       zram_extra_algos: ""
       kpm_password: ""
       custom_external_modules: ""
-      custom_kernel_options: ""
+      custom_kernel_options: |
+        CONFIG_KALLSYMS=y
+        CONFIG_KALLSYMS_ALL=y
       upload_aux_artifacts: true
