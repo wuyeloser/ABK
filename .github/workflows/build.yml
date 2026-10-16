@@ -5056,6 +5056,20 @@ jobs:
               if not path.exists():
                   raise SystemExit(f"未找到 {path}，无法补齐 Official SUSFS hook 符号")
 
+              resolver = ksu_dir / "infra/symbol_resolver.c"
+              kbuild = ksu_dir / "Kbuild"
+              if resolver.exists() and kbuild.exists() and "infra/symbol_resolver.o" in kbuild.read_text():
+                  resolver_text = resolver.read_text()
+                  definitions = (
+                      r"(?m)^void\s+\*\s*ksu_resolve_symbol_for_functable_hook\s*\(",
+                      r"(?m)^unsigned long\s+(?:__nocfi\s+)?find_kernel_symbol_exact\s*\(",
+                      r"(?m)^void\s+(?:__init\s+)?ksu_init_symbol_resolver\s*\(",
+                  )
+                  if not all(re.search(pattern, resolver_text) for pattern in definitions):
+                      raise SystemExit(f"{resolver} 已参与编译但缺少预期定义，停止注入以避免符号冲突")
+                  print(f"{resolver} 已提供完整符号解析实现，保留上游实现")
+                  return False
+
               text = path.read_text()
               additions = []
               if "abk_ksu_lookup_symbol(" not in text:
