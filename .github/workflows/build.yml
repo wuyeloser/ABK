@@ -5344,6 +5344,19 @@ jobs:
               print("Official SUSFS 源码兼容修复无需修改。")
           PY
 
+          # SUSFS's 5.10 KernelSU patch calls close_fd(), which only exists on
+          # Linux >= 5.11. Use KernelSU's own ksu_close_fd() (close syscall).
+          if [ "${{ inputs.kernel_version }}" = "5.10" ]; then
+            preinit_c="$(find -L common/drivers/kernelsu KernelSU/kernel -path '*/preinit/preinit.c' -print -quit 2>/dev/null || true)"
+            if [ -n "$preinit_c" ] && grep -qE '(^|[^_a-z])close_fd\(' "$preinit_c"; then
+              sed -i -E 's/(^|[^_a-z])close_fd\(/\1ksu_close_fd(/g' "$preinit_c"
+              if grep -qE '(^|[^_a-z])close_fd\(' "$preinit_c"; then
+                echo "::error::$preinit_c 仍含 5.10 不存在的 close_fd()"; exit 1
+              fi
+              echo "已将 $preinit_c 中的 close_fd() 改为 ksu_close_fd() (5.10 兼容)"
+            fi
+          fi
+
       - name: 修复 Official SUSFS 6.1-6.12 SELinux 导出
         if: inputs.ksu_variant == 'Official' && inputs.enable_susfs && (inputs.kernel_version == '6.1' || inputs.kernel_version == '6.6' || inputs.kernel_version == '6.12')
         env:
