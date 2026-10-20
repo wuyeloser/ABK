@@ -3916,6 +3916,7 @@ jobs:
           BASH_ENV: ${{ inputs.source_mode == 'custom_git' && format('{0}/.github/scripts/custom-source-feature-env.sh', github.workspace) || '' }}
           ABK_FEATURE_ID: susfs
           ABK_FEATURE_FAILURE_MESSAGE: "Official SUSFS compatibility integration failed"
+          ABK_SUSFS_KVER: ${{ inputs.kernel_version }}
         working-directory: ${{ env.KERNEL_ROOT }}
         run: |
           set -euo pipefail
@@ -5346,7 +5347,7 @@ jobs:
 
           # SUSFS's 5.10 KernelSU patch calls close_fd(), which only exists on
           # Linux >= 5.11. Use KernelSU's own ksu_close_fd() (close syscall).
-          if [ "${{ inputs.kernel_version }}" = "5.10" ]; then
+          if [ "$ABK_SUSFS_KVER" = "5.10" ]; then
             preinit_c="$(find -L common/drivers/kernelsu KernelSU/kernel -path '*/preinit/preinit.c' -print -quit 2>/dev/null || true)"
             if [ -n "$preinit_c" ] && grep -qE '(^|[^_a-z])close_fd\(' "$preinit_c"; then
               sed -i -E 's/(^|[^_a-z])close_fd\(/\1ksu_close_fd(/g' "$preinit_c"
