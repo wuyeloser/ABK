@@ -1,0 +1,47 @@
+name: Marble 5.10.226 - Official KernelSU main 4663610 + SUSFS v2.3.0 + KPatch-Next ready
+
+permissions:
+  contents: write
+  actions: write
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    uses: ./.github/workflows/build.yml
+    secrets: inherit
+    with:
+      # OS2.0.215.0 官改包 boot.img 的真实 KMI：
+      # 5.10.226-android12-9，源码对应 android12-5.10-2024-11_r8。
+      android_version: "android12"
+      kernel_version: "5.10"
+      sub_level: "226"
+      os_patch_level: "2024-11"
+      revision: "r8"
+      ksu_variant: "Official"
+      ksu_branch: "Custom(自定义)"
+      custom_ref: "4663610011d03771a64e7c36a2aa65bd1794022d"
+      susfs_ref: "f43926dc94b8ffbf9b74321313536600f69367b1"
+      version: "5.10.226-android12-9"
+      build_time: "N"
+      enable_susfs: true
+      use_zram: false
+      use_bbg: false
+      use_ddk: false
+      use_ntsync: false
+      use_networking: false
+      # Official KernelSU has no built-in CONFIG_KPM; KPM is provided by
+      # KPatch-Next on top, which needs KALLSYMS_ALL and CONFIG_KPM off.
+      use_kpm: false
+      use_rekernel: false
+      supp_op: false
+      virtualization_support: "off"
+      zram_full_algo: false
+      zram_extra_algos: ""
+      kpm_password: ""
+      custom_external_modules: ""
+      custom_kernel_options: |
+        CONFIG_KALLSYMS=y
+        CONFIG_KALLSYMS_ALL=y
+      upload_aux_artifacts: true
