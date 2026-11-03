@@ -4489,8 +4489,19 @@ jobs:
                       "ksu_handle_execveat_sucompat" in header_text,
                   )
                   if all(direct_hook_markers):
+                      # Recent official KSU moved this helper to include/util.h;
+                      # the SUSFS direct-hook template still calls it without
+                      # including that header. Keep the upstream implementation.
+                      if "userspace_stack_buffer(" in source_text and '#include "util.h"' not in source_text:
+                          util_header = ksu_dir / "include/util.h"
+                          if not util_header.exists() or "userspace_stack_buffer(" not in util_header.read_text():
+                              raise SystemExit(f"{path} 使用 userspace_stack_buffer，但上游 util.h 未提供实现")
+                          source_text = ensure_include(source_text, '#include "util.h"', '#include "feature/adb_root.h"\n')
+                          path.write_text(source_text)
+                          changed = True
+                          print(f"已补齐 {path} 的上游 userspace_stack_buffer 头文件")
                       print("已检测到 SUSFS 现代 execveat/ADB Root 直连实现，保持上游源码不覆盖")
-                      return False
+                      return changed
 
                   if any(direct_hook_markers):
                       raise SystemExit(
