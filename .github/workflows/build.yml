@@ -5028,6 +5028,37 @@ jobs:
 
               text = ensure_official_selinux_hide_exports(text, path)
 
+              if (
+                  "hook_selinux_status_open();" in text
+                  and not re.search(r"static void hook_selinux_status_open\s*\([^)]*\)\s*\{", text)
+              ):
+                  # The SUSFS hunk can remove the definition while a newer
+                  # upstream enable path survives. Restore its real operation.
+                  status_hook = dedent("""\
+                  static void hook_selinux_status_open(void)
+                  {
+                      if (orig_sel_open_handle_status)
+                          return;
+                      if (!sel_open_handle_status_slot) {
+                          struct file_operations *ops = find_kernel_symbol_exact("sel_handle_status_ops");
+                          if (!ops) {
+                              pr_err("selinux_hide: sel_handle_status_ops not found, fake status will not work\\n");
+                              return;
+                          }
+                          sel_open_handle_status_slot = &ops->open;
+                      }
+                      sel_open_handle_status_fn new_fn = my_sel_open_handle_status;
+                      orig_sel_open_handle_status = *sel_open_handle_status_slot;
+                      int ret = ksu_patch_text(sel_open_handle_status_slot, &new_fn, sizeof(new_fn), KSU_PATCH_TEXT_FLUSH_DCACHE);
+                      if (ret) {
+                          pr_err("selinux_hide: init: patch_text sel_open_handle_status err: %d\\n", ret);
+                          sel_open_handle_status_slot = NULL;
+                          orig_sel_open_handle_status = NULL;
+                      }
+                  }
+                  """)
+                  text = text.replace("static void hook_selinux_status_open();", status_hook, 1)
+
               dump_is_pointer = re.search(r"\(\s*\*\s*security_dump_masked_av_fn\s*\)", text) is not None
               compute_is_pointer = re.search(r"\(\s*\*\s*context_struct_compute_av_fn\s*\)", text) is not None
 
@@ -5206,7 +5237,9 @@ jobs:
           text = text.replace('#include "hook/syscall_hook.h"\n', "")
           text = ensure_line_after(text, '#include "feature/adb_root.h"\n', '#include "hook/setuid_hook.h"\n')
           text = ensure_line_after(text, '#include "hook/setuid_hook.h"\n', '#include "feature/sucompat.h"\n')
-          text = text.replace("bool ksu_late_loaded;\n", "")
+          # Built-in SUSFS never late-loads, but current get_info/preinit still
+          # reads this state. Retain the upstream zero-initialized definition.
+          text = ensure_line_after(text, '#include "feature/sucompat.h"\n', "bool ksu_late_loaded;\n")
           text = re.sub(
               r'\n#if defined\(__x86_64__\)\n#include <asm/cpufeature\.h>\n#include <linux/version\.h>\n#ifndef X86_FEATURE_INDIRECT_SAFE\n#error "FATAL: Your kernel is missing the indirect syscall bypass patches!"\n#endif\n#endif\n',
               "\n",
@@ -5217,7 +5250,7 @@ jobs:
           text = replace_function(text, "int __init kernelsu_init(void)", INIT_BODY)
           text = replace_function(text, "void __exit kernelsu_exit(void)", EXIT_BODY)
 
-          if "ksu_late_loaded" in text or "ksu_syscall_hook_manager_" in text:
+          if "ksu_syscall_hook_manager_" in text:
               raise SystemExit(f"{init_c} 仍残留 Official SUSFS 不兼容符号")
           for required in ("susfs_init();", "ksu_sucompat_init();", "ksu_setuid_hook_init();"):
               if required not in text:
@@ -5233,11 +5266,13 @@ jobs:
           include_ksu = ksu_dir / "include/ksu.h"
           if include_ksu.exists():
               header = include_ksu.read_text()
-              updated = header.replace("extern bool ksu_late_loaded;\n", "")
+              updated = header
+              if "extern bool ksu_late_loaded;" not in updated:
+                  updated = updated.rstrip() + "\n\nextern bool ksu_late_loaded;\n"
               if updated != header:
                   include_ksu.write_text(updated)
                   changed = True
-                  print(f"已移除 {include_ksu} 中的 ksu_late_loaded 声明")
+                  print(f"已保留 {include_ksu} 中的 ksu_late_loaded 声明")
 
           changed = ensure_official_susfs_objects(ksu_dir) or changed
           changed = patch_official_selinux_hide(ksu_dir) or changed
