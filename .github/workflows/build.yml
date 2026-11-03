@@ -4070,6 +4070,38 @@ jobs:
               text = path.read_text()
               original = text
 
+              # Recent main added preinit handling, so the older SUSFS hunk
+              # can miss this observer while ksud.h already uses the direct ABI.
+              ksud_header = ksu_dir / "runtime/ksud.h"
+              if ksud_header.exists() and "int ksu_handle_execveat_ksud(int *fd" in ksud_header.read_text():
+                  observer_pattern = re.compile(
+                      r"(?ms)^void ksu_handle_execveat_ksud\(const char \*path, struct user_arg_ptr \*argv\)\n\{.*?^\}",
+                  )
+                  def adapt_ksud_observer(match):
+                      observer = match.group(0).replace(
+                          "void ksu_handle_execveat_ksud(", "static void ksu_handle_execveat_ksud_event(", 1,
+                      )
+                      # Direct SUSFS hooks stay installed; the syscall bridge
+                      # being stopped here is intentionally not built in this mode.
+                      observer = observer.replace("            ksu_stop_ksud_execve_hook();\n", "")
+                      return observer + dedent("""\
+
+
+                      int ksu_handle_execveat_ksud(int *fd, struct filename **filename_ptr,
+                                                   struct user_arg_ptr *argv,
+                                                   struct user_arg_ptr *envp, int *flags)
+                      {
+                          (void)fd;
+                          (void)envp;
+                          (void)flags;
+                          if (!filename_ptr || IS_ERR_OR_NULL(*filename_ptr))
+                              return 0;
+                          ksu_handle_execveat_ksud_event((*filename_ptr)->name, argv);
+                          return 0;
+                      }
+                      """)
+                  text = observer_pattern.sub(adapt_ksud_observer, text, count=1)
+
               text = re.sub(
                   r"(?m)^(?:static\s+)?void\s+ksu_handle_sys_read\s*\(\s*unsigned int fd\s*,\s*char __user \*\*buf_ptr\s*,\s*size_t \*count_ptr\s*\)",
                   "void ksu_handle_sys_read(unsigned int fd)",
