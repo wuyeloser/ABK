@@ -3921,6 +3921,12 @@ jobs:
         run: |
           set -euo pipefail
 
+          if grep -qF 'int ksu_setup_preinit_file(' common/drivers/kernelsu/preinit/preinit.c; then
+            python3 "$GITHUB_WORKSPACE/.github/scripts/verify-official-susfs-modern.py" common/drivers/kernelsu
+            echo "保留上游新版 SUSFS 完整直连适配，不执行旧模板重写"
+            exit 0
+          fi
+
           python3 - <<'PY'
           from pathlib import Path
           from textwrap import dedent
@@ -5445,6 +5451,12 @@ jobs:
         working-directory: ${{ env.KERNEL_ROOT }}
         run: |
           set -euo pipefail
+
+          if grep -qF 'int ksu_setup_preinit_file(' common/drivers/kernelsu/preinit/preinit.c; then
+            python3 "$GITHUB_WORKSPACE/.github/scripts/verify-official-susfs-modern.py" common/drivers/kernelsu
+            echo "新版 SUSFS 已直接集成 SELinux，不添加旧版导出和空实现"
+            exit 0
+          fi
 
           python3 - <<'PY'
           from pathlib import Path

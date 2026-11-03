@@ -21,8 +21,8 @@ jobs:
       ksu_variant: "Official"
       ksu_branch: "Custom(自定义)"
       custom_ref: "28db74f6f4692e97006ce9ebd8b19b9cc614b5b7"
-      # Retain the SUSFS revision verified in the previous piano build.
-      susfs_ref: "a0f9c59e2243f8a5db955f4ad1686d5e0ad26e1a"
+      # This upstream revision cleanly supports official main's preinit ABI.
+      susfs_ref: "c7f670f57b7d43d75066b6657f8aee9cdf580d96"
       version: "6.6.118-android15-8"
       build_time: "N"
       enable_susfs: true
