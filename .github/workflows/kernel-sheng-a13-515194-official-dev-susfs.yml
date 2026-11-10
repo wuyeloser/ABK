@@ -1,0 +1,32 @@
+name: sheng Android 13 5.15.194 Official KernelSU dev SUSFS
+permissions:
+  contents: write
+  actions: write
+on:
+  workflow_dispatch:
+jobs:
+  build:
+    uses: ./.github/workflows/build.yml
+    secrets: inherit
+    with:
+      android_version: "android13"
+      kernel_version: "5.15"
+      sub_level: "194"
+      os_patch_level: "2025-12"
+      ksu_variant: "Official"
+      ksu_branch: "Custom(自定义)"
+      custom_ref: "02ffbd447eb6a2f05d9f46e17b1e1c3bcfdd9971"
+      susfs_ref: "fe943d15ec6a1891f7a360bf210589bdffe4e318"
+      version: "5.15.194-android13-8"
+      build_time: "N"
+      enable_susfs: true
+      use_zram: false
+      use_bbg: false
+      use_ddk: false
+      use_ntsync: false
+      use_networking: false
+      use_kpm: false
+      use_rekernel: false
+      supp_op: false
+      virtualization_support: "off"
+      upload_aux_artifacts: true
