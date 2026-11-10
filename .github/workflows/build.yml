@@ -3911,6 +3911,28 @@ jobs:
           )
           PY
 
+      - name: 修复 Android 13 5.15 SUSFS 头文件冲突
+        if: inputs.android_version == 'android13' && inputs.kernel_version == '5.15' && inputs.sub_level == '194' && inputs.enable_susfs
+        working-directory: ${{ env.KERNEL_ROOT }}
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          fixes = {
+              'fs/proc/task_mmu.c': ('#include <linux/pkeys.h>\n', '#if defined(CONFIG_KSU_SUSFS_SUS_KSTAT) || defined(CONFIG_KSU_SUSFS_SUS_MAP) || defined(CONFIG_KSU_SUSFS_OPEN_REDIRECT)\n#include <linux/susfs_def.h>\n#endif\n'),
+              'fs/namespace.c': ('#include <linux/mnt_idmapping.h>\n', '#ifdef CONFIG_KSU_SUSFS\n#include <linux/susfs_def.h>\n#endif\n#ifdef CONFIG_KSU_SUSFS_SUS_MOUNT\nextern bool susfs_is_current_ksu_domain(void);\nextern struct static_key_true susfs_is_sdcard_android_data_not_decrypted;\n#define CL_COPY_MNT_NS BIT(25)\n#endif\n'),
+          }
+          for filename, (anchor, addition) in fixes.items():
+              path = Path('common') / filename
+              data = path.read_text()
+              if '#include <linux/susfs_def.h>' in data:
+                  print(f'{filename}: header already present; preserved')
+                  continue
+              if data.count(anchor) != 1:
+                  raise SystemExit(f'{filename}: expected unique include anchor')
+              path.write_text(data.replace(anchor, anchor + addition, 1))
+              print(f'{filename}: inserted rejected SUSFS declarations')
+          PY
+
       - name: 修复 Official SUSFS 源码兼容
         if: inputs.ksu_variant == 'Official' && inputs.enable_susfs
         env:
