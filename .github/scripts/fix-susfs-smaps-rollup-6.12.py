@@ -24,7 +24,7 @@ def fix(path: Path) -> None:
             return (f"{indent}{marker}\n"
                     "#ifdef CONFIG_KSU_SUSFS_SUS_MAP\n"
                     f"{indent}if (!vma->vm_file ||\n"
-                    f"{indent}    !SUSFS_IS_INODE_SUS_MAP(file_inode(vma->vm_file)))\n"
+                    f"{indent}    !(SUSFS_IS_INODE_SUS_MAP(file_inode(vma->vm_file))))\n"
                     "#endif\n"
                     f"{indent}\tsmap_gather_stats(vma, &mss, {offset});")
 
