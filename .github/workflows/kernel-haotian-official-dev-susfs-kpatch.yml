@@ -19,8 +19,10 @@ jobs:
       os_patch_level: "2026-01"
       ksu_variant: "Official"
       ksu_branch: "Custom(自定义)"
-      custom_ref: "9f5966b4d534869fd72a79b3c6ea602e5eae3022"
-      susfs_ref: "2d11d711de80f0f749b3055f8da8f7b9682454e4"
+      # tiann/KernelSU main as of 2026-11-10.
+      custom_ref: "02ffbd447eb6a2f05d9f46e17b1e1c3bcfdd9971"
+      # susfs4ksu gki-android15-6.6 as of 2026-11-09 (v2.4.0, synced with upstream KSU).
+      susfs_ref: "ec03d0c73b821afa1d5037d6d493216f59744fcb"
       version: "6.6.118-android15-8"
       build_time: "N"
       enable_susfs: true
