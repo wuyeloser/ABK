@@ -2367,6 +2367,7 @@ jobs:
 
             # Android 16 - 6.12 修复
             if [[ "$ABK_ANDROID_VERSION" == "android16" && "$ABK_KERNEL_VERSION" == "6.12" ]]; then
+              python3 "$GITHUB_WORKSPACE/.github/scripts/fix-susfs-smaps-rollup-6.12.py" ./fs/proc/task_mmu.c
               # 修复 setuid_hook.c 重复定义
               SETUID_HOOK="$KERNEL_ROOT/common/drivers/kernelsu/setuid_hook.c"
               if [ -f "$SETUID_HOOK" ]; then
